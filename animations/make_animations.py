@@ -867,24 +867,32 @@ def draw_siegmeyer(d, x, g, nod, look, breath, lift=0.0):
         limb(d, [(x + side * 10, g - 18 - lift), knee, (x - side * 6, g - 5)], 12, 115)
         d.ellipse(box(*knee, 8, 6), fill=215, outline=0, width=2)                         # knee cop
         d.ellipse(box(x - side * 8, g - 5, 9, 5), fill=190, outline=0, width=2)           # boot
-    tip, guard, top = (x - 66, g + 1), (x - 33, g - 74), (x - 24, g - 96)                # zweihander,
-    for width, level in ((11, 0), (7, 215)):                                              # leant on him
+    tip, guard, top = (x - 61, g - 10), (x - 33, g - 74), (x - 25, g - 92)               # zweihander,
+    for width, level in ((13, 0), (7, 215)):                                              # leant on him
         d.line([tip, guard], fill=level, width=width)
         d.line([(x - 47, g - 82), (x - 19, g - 66)], fill=level, width=width - 1)         # crossguard
         d.line([guard, top], fill=level, width=width - 3)                                 # grip
-    d.line([(x - 63, g - 4), (x - 37, g - 64)], fill=120, width=2)                        # fuller
-    d.ellipse(box(*top, 5), fill=230, outline=0, width=2)                                 # pommel
+    d.line([(x - 58, g - 15), (x - 37, g - 64)], fill=120, width=2)                       # fuller
+    d.ellipse(box(*top, 7), fill=0)
+    d.ellipse(box(*top, 4), fill=230)                                                     # pommel
     by = g - 36 - up
     d.ellipse(box(x, by, 31, 27), fill=0)                                                 # dark border
-    d.ellipse(box(x, by, 28, 24), fill=70, outline=225, width=2)                          # onion armour
-    for k in (-16, -6, 6, 16):                                                            # its lobes
-        d.arc(box(x + k * 0.7, by, abs(k) + 2, 22), 270 if k > 0 else 90, 90 if k > 0 else 270,
-              fill=175, width=3)
+    def half_height(dx):
+        return 24 * math.sqrt(max(0.0, 1 - (dx / 28) ** 2))
+    edges = (-28, -20, -12, -4, 4, 12, 20, 28)                                            # onion armour:
+    for k, (x0, x1) in enumerate(zip(edges, edges[1:])):                                  # lobes about one
+        level = 205 if k % 2 == 1 else 60                                                 # LED column wide,
+        if k == 3:                                                                        # bright and dark
+            level = 225
+        d.polygon([(x + x0, by - half_height(x0)), (x + x1, by - half_height(x1)),
+                   (x + x1, by + half_height(x1)), (x + x0, by + half_height(x0))], fill=level)
+    d.ellipse(box(x, by, 28, 24), outline=225, width=2)
     d.line([(x - 22, by + 16), (x + 22, by + 16)], fill=230, width=3)                     # belt
     shoulders = [(x - 25, by - 16), (x + 25, by - 16)]
-    hilt = (x - 28, g - 86)                                                               # arm on the sword
+    hilt = (x - 29, g - 83)                                                               # arm on the sword
     limb(d, [shoulders[0], (x - 38, by - 6), hilt], 8, 150)
-    d.ellipse(box(*hilt, 6), fill=235, outline=0, width=2)
+    d.ellipse(box(*hilt, 9), fill=0)
+    d.rectangle(box(*hilt, 5), fill=240)                                                  # gauntlet
     rest = (x + 30, g - 20 - lift)                                                        # hand on his knee
     limb(d, [shoulders[1], (x + 36, by + 4), rest], 8, 150)
     d.ellipse(box(*rest, 6), fill=235, outline=0, width=2)
@@ -911,24 +919,29 @@ def siegmeyer_napping():
     fire_x, ledge = 134, 110              # the bonfire on a rock ledge to his right
     wake, asleep = 120, 178
     z_spawns = [0, 25, 50, 75, 100]       # one per snore; after waking there's a pause before the next
-    flames = fire_layers(n, 16, 11, 26, seed=12, top=30)
+    flames = fire_layers(n, 16, 11, 34, seed=12, top=40)     # taller and hotter than Solaire's
     embers = [(int(k * n / 12 + rng.uniform(0, 8)), rng.uniform(-6, 6), rng.uniform(-0.4, 0.4))
               for k in range(12)]
     frames = []
     for t in range(n):
         img, d = new_canvas()
-        d.polygon([(0, H), (0, g), (110, g), (118, 132), (126, ledge), (W, ledge), (W, H)], fill=35)
-        flicker = flames[t].crop((10, 30, 30, 70)).resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
+        rock = [(0, g), (110, g), (118, 132), (126, ledge), (W, ledge)]
+        d.polygon([(0, H)] + rock + [(W, H)], fill=35)
+        flicker = flames[t].crop((10, 40, 30, 90)).resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
         d.ellipse(box(x + 10, g + 1, 70, 6), fill=int(40 + 0.12 * flicker))                # firelight on
-        d.ellipse(box(fire_x, ledge + 2, 46, 7), fill=int(50 + 0.15 * flicker))           # his step and the ledge
-        draw_bonfire(img, d, fire_x, ledge, flames[t], 1.3)
+        d.ellipse(box(fire_x, ledge + 3, 40, 5), fill=int(30 + 0.1 * flicker))            # his step and the ledge
+        d.line(rock, fill=int(95 + 0.2 * flicker), width=3)                               # lit edge of the rock
+        draw_bonfire(img, d, fire_x, ledge, flames[t], 1.6)
         awake = wake <= t < asleep
         lift = 7 * math.exp(-max(0, t - wake) / 3) * ease((t - wake + 1) / 2) if awake else 0.0
         if awake:
-            nod = 1 - ease((t - wake) / 2) + ease((t - 150) / 26)
+            # startled, looks around, turns to the fire, sighs, and dozes off facing it
+            nod = 1 - ease((t - wake) / 2) + ease((t - 158) / 20)
+            turn = ease((t - 140) / 8) * (1 - ease((t - 166) / 12))
             look = (math.sin((t - wake - 8) * 0.18) * ease((t - wake - 8) / 4)
-                    * (1 - ease((t - 142) / 6)))
-            breath = 0.5 * cycle(t, n, 16)
+                    * (1 - ease((t - 140) / 6)) + 0.9 * turn)
+            sigh = ease((t - 148) / 6) * (1 - ease((t - 154) / 8))
+            breath = 0.5 * cycle(t, n, 16) + 4 * sigh
         else:
             nod, look = 1.0, 0.0
             breath = 3 * math.cos(TAU * t / 25)     # snores out as each Z appears
@@ -944,6 +957,13 @@ def siegmeyer_napping():
             if age < 26:
                 sparks.append((fire_x + ox + drift * age + 3 * math.sin(age * 0.4),
                                ledge - 70 - age * 3, 1.8, 220 * (1 - age / 26)))
+        if 155 <= t < 179:                                                                # the sigh's puff
+            age = t - 155
+            hx = x + look * 4 + nod * 2 + look * 6
+            hy = g - 74 + nod * 9 - (breath + lift)
+            for k, (ox, oy) in enumerate(((0, 0), (5, -4), (-4, -6))):
+                sparks.append((hx + 10 + ox + age * 0.7, hy - 4 + oy - age * 1.8,
+                               3.5 + age * 0.2 - k * 0.5, 170 * min(1, age / 3) * (1 - age / 24)))
         draw_particles(d, sparks)
         for t0 in z_spawns:
             age = (t - t0) % n
