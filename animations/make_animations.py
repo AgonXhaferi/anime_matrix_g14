@@ -858,52 +858,98 @@ def draw_z(d, x, y, size, level):
     s = size / 2
     d.line([(x - s, y - s), (x + s, y - s), (x - s, y + s), (x + s, y + s)], fill=int(level), width=3)
 
-def draw_siegmeyer(d, x, g, nod, look, breath):
-    """Siegmeyer of Catarina sitting on the ground; nod 1 is head slumped, look turns it sideways."""
-    d.line([(x - 52, g + 2), (x - 40, g - 86)], fill=190, width=4)                        # zweihander
-    d.line([(x - 52, g - 70), (x - 30, g - 66)], fill=190, width=4)
-    d.line([(x - 40, g - 86), (x - 38, g - 100)], fill=130, width=3)
-    d.ellipse(box(x - 22, g - 8, 17, 8), fill=90, outline=190, width=2)                   # legs
-    d.ellipse(box(x + 22, g - 8, 17, 8), fill=90, outline=190, width=2)
-    d.ellipse(box(x, g - 34, 28, 24 + breath), fill=55, outline=205, width=2)            # onion armour
-    for k in (-14, 0, 14):
-        d.arc(box(x + k * 0.6, g - 34, abs(k) + 3, 22 + breath), 250 if k < 0 else -70,
-              110 if k < 0 else 70, fill=130, width=2)
-    d.line([(x - 26, g - 44), (x - 40, g - 70)], fill=150, width=6)                       # arm on sword
-    hx, hy = x + look * 5 + nod * 2, g - 66 + nod * 8 - breath
-    d.ellipse(box(hx, hy, 19, 15), fill=175, outline=225, width=2)                        # onion helmet
-    d.polygon([(hx - 9, hy - 10), (hx + 9, hy - 10), (hx + 1, hy - 28)], fill=175)
-    d.line([(hx - 15 + look * 3, hy + 2), (hx + 15 + look * 3, hy + 2)], fill=20, width=2)  # visor
-    d.line([(hx, hy - 14), (hx, hy + 13)], fill=110, width=2)
+def draw_siegmeyer(d, x, g, nod, look, breath, lift=0.0):
+    """Siegmeyer of Catarina sitting cross-legged, one hand on his planted zweihander. nod 1 is
+    head slumped, look turns the visor sideways, breath raises everything above the hips."""
+    up = breath + lift
+    for side in (-1, 1):                                                                  # crossed legs
+        knee = (x + side * 32, g - 12)
+        limb(d, [(x + side * 10, g - 18 - lift), knee, (x - side * 6, g - 5)], 12, 115)
+        d.ellipse(box(*knee, 8, 6), fill=215, outline=0, width=2)                         # knee cop
+        d.ellipse(box(x - side * 8, g - 5, 9, 5), fill=190, outline=0, width=2)           # boot
+    tip, guard, top = (x - 66, g + 1), (x - 33, g - 74), (x - 24, g - 96)                # zweihander,
+    for width, level in ((11, 0), (7, 215)):                                              # leant on him
+        d.line([tip, guard], fill=level, width=width)
+        d.line([(x - 47, g - 82), (x - 19, g - 66)], fill=level, width=width - 1)         # crossguard
+        d.line([guard, top], fill=level, width=width - 3)                                 # grip
+    d.line([(x - 63, g - 4), (x - 37, g - 64)], fill=120, width=2)                        # fuller
+    d.ellipse(box(*top, 5), fill=230, outline=0, width=2)                                 # pommel
+    by = g - 36 - up
+    d.ellipse(box(x, by, 31, 27), fill=0)                                                 # dark border
+    d.ellipse(box(x, by, 28, 24), fill=70, outline=225, width=2)                          # onion armour
+    for k in (-16, -6, 6, 16):                                                            # its lobes
+        d.arc(box(x + k * 0.7, by, abs(k) + 2, 22), 270 if k > 0 else 90, 90 if k > 0 else 270,
+              fill=175, width=3)
+    d.line([(x - 22, by + 16), (x + 22, by + 16)], fill=230, width=3)                     # belt
+    shoulders = [(x - 25, by - 16), (x + 25, by - 16)]
+    hilt = (x - 28, g - 86)                                                               # arm on the sword
+    limb(d, [shoulders[0], (x - 38, by - 6), hilt], 8, 150)
+    d.ellipse(box(*hilt, 6), fill=235, outline=0, width=2)
+    rest = (x + 30, g - 20 - lift)                                                        # hand on his knee
+    limb(d, [shoulders[1], (x + 36, by + 4), rest], 8, 150)
+    d.ellipse(box(*rest, 6), fill=235, outline=0, width=2)
+    for sx, sy in shoulders:                                                              # pauldrons
+        d.ellipse(box(sx, sy, 11, 8), fill=200, outline=0, width=2)
+        d.ellipse(box(sx, sy + 6, 8, 5), fill=150, outline=0, width=2)
+    hx, hy = x + look * 4 + nod * 2, g - 74 + nod * 9 - up
+    d.ellipse(box(x, g - 60 - up + nod * 3, 20, 5), fill=205, outline=0, width=2)        # fold-down collar
+    d.ellipse(box(hx, hy, 22, 18), fill=0)
+    d.polygon([(hx - 11, hy - 8), (hx + 11, hy - 8), (hx + 1, hy - 33)], fill=0)
+    d.polygon([(hx - 8, hy - 10), (hx + 8, hy - 10), (hx + 1, hy - 30)], fill=185)        # onion tip
+    d.ellipse(box(hx, hy, 19, 15), fill=185, outline=240, width=2)                        # onion helmet
+    d.ellipse(box(hx + 1, hy - 30, 3), fill=250)
+    d.line([(hx - 15 + look * 6, hy + 2), (hx + 15 + look * 6, hy + 2)], fill=0, width=4)  # visor slit
+    d.line([(hx + look * 6, hy - 14), (hx + look * 6, hy - 2)], fill=120, width=2)
+    d.line([(hx - 16, hy + 10), (hx + 16, hy + 10)], fill=240, width=2)                   # rim
 
 def siegmeyer_napping():
+    """He snores, is startled awake, looks around, and slowly nods off again by his bonfire."""
     n = 200
-    x, g = 168, 171
-    wake, asleep = 120, 176
-    z_spawns = [0, 25, 50, 75, 100, 180]
+    rng = random.Random(8)
+    x, g = 186, 171
+    fire_x = 80
+    wake, asleep = 120, 178
+    z_spawns = [0, 25, 50, 75, 100]       # one per snore; after waking there's a pause before the next
+    flames = fire_layers(n, 16, 11, 26, seed=12, top=30)
+    embers = [(int(k * n / 12 + rng.uniform(0, 8)), rng.uniform(-6, 6), rng.uniform(-0.4, 0.4))
+              for k in range(12)]
     frames = []
     for t in range(n):
         img, d = new_canvas()
         d.polygon([(0, H), (0, 170), (W, 170), (W, H)], fill=35)
+        flicker = flames[t].crop((10, 30, 30, 70)).resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
+        d.ellipse(box(fire_x + 20, g, 90, 8), fill=int(45 + 0.15 * flicker))              # firelight
+        draw_bonfire(img, d, fire_x, g - 2, flames[t], 1.3)
         awake = wake <= t < asleep
+        lift = 7 * math.exp(-max(0, t - wake) / 3) * ease((t - wake + 1) / 2) if awake else 0.0
         if awake:
-            nod = -0.6 * (1 - ease((t - wake) / 3)) if t < wake + 3 else 0.0
-            nod += ease((t - 152) / 24)
-            look = math.sin((t - wake - 6) * 0.25) * ease((t - wake - 6) / 4) * (1 - ease((t - 140) / 6))
+            nod = 1 - ease((t - wake) / 2) + ease((t - 150) / 26)
+            look = (math.sin((t - wake - 8) * 0.18) * ease((t - wake - 8) / 4)
+                    * (1 - ease((t - 142) / 6)))
+            breath = 0.5 * cycle(t, n, 16)
         else:
             nod, look = 1.0, 0.0
-        breath = 1.5 * cycle(t, n, 4) if not awake else 0.5 * cycle(t, n, 12)
-        draw_siegmeyer(d, x, g, nod, look, breath)
-        if awake and t < wake + 12:                                                       # startled "!"
-            d.line([(x + 4, g - 120), (x + 4, g - 106)], fill=255, width=4)
-            d.ellipse(box(x + 4, g - 100, 2.5), fill=255)
+            breath = 3 * math.cos(TAU * t / 25)     # snores out as each Z appears
+        def figure(ld):
+            draw_siegmeyer(ld, x, g, nod, look, breath, lift)
+            if awake and t < wake + 14:                                                   # startled "!"
+                ld.line([(x + 30, g - 150), (x + 30, g - 124)], fill=255, width=6)
+                ld.ellipse(box(x + 30, g - 115, 4), fill=255)
+        paste_figure(img, figure, lambda y: 0.85 + 0.15 * flicker / 255)
+        sparks = []
+        for t0, ox, drift in embers:
+            age = (t - t0) % n
+            if age < 26:
+                sparks.append((fire_x + ox + drift * age + 3 * math.sin(age * 0.4),
+                               g - 70 - age * 3, 1.8, 220 * (1 - age / 26)))
+        draw_particles(d, sparks)
         for t0 in z_spawns:
             age = (t - t0) % n
             if age >= 60 or (wake <= t and (t0 < wake or t < t0) and t < asleep):
                 continue          # the Z's pop when he wakes
             k = age / 60
-            fade = min(1.0, age / 6) * (1 - k ** 2)
-            draw_z(d, x + 24 + 42 * k + 5 * math.sin(age * 0.2), g - 100 - 80 * k, 17 + 10 * k, 230 * fade)
+            fade = min(1.0, age / 5) * (1 - k ** 2)
+            draw_z(d, x + 22 + 48 * k + 5 * math.sin(age * 0.2), g - 80 - 95 * k, 8 + 22 * k, 235 * fade)
         frames.append(img)
     return frames
 
