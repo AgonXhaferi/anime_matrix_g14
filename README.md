@@ -19,6 +19,11 @@ ASUS ROG Zephyrus G14 (tested on a GA402RK), on top of [asusctl](https://gitlab.
   outside the lid, using asusctl 6.3.8's own geometry and sampling (diagonal mapping for
   native GIFs, 16-sample averaging for scaled ones). *Plain GIF* shows the file itself.
   Native means 74×36 (ASUS's stock art) or 74×39 (the GA402's full diagonal grid).
+- *Originals* are animations made for this lid by `animations/make_animations.py`: Wizard vs
+  Dragon, Hyperspace, Digital Rain, Inferno, Thunderstorm, Space Battle, Heartbeat, Plasma,
+  Ripples and Equalizer. Each scene is drawn in millimetres as the lid is seen from outside, and
+  every LED takes the brightness under its physical position, so they play pixel-perfect, the
+  right way up and without stretching. Edit a scene and run the script again to regenerate them.
 - *Display Settings* shows asusd's brightness and "off when unplugged / lid closed /
   suspended" options and changes them instantly over D-Bus. It also updates when they
   are changed elsewhere, e.g. with `asusctl anime --brightness`.

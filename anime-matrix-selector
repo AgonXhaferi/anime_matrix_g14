@@ -49,6 +49,8 @@ SEARCH_DIRECTORIES = [
     (os.path.expanduser("~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Normal"), "Armoury Crate Normal"),
     (os.path.expanduser("~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Patterns"), "Armoury Crate Patterns"),
     (os.path.expanduser("~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Alan_Walker"), "Alan Walker Collection"),
+    # Made for this lid by animations/make_animations.py; the app is run through a symlink
+    (os.path.join(os.path.dirname(os.path.realpath(__file__)), "animations"), "Originals"),
 ]
 
 def get_current_active_path():
