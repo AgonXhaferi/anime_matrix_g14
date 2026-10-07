@@ -903,11 +903,12 @@ def draw_siegmeyer(d, x, g, nod, look, breath, lift=0.0):
     d.line([(hx - 16, hy + 10), (hx + 16, hy + 10)], fill=240, width=2)                   # rim
 
 def siegmeyer_napping():
-    """He snores, is startled awake, looks around, and slowly nods off again by his bonfire."""
+    """He snores, is startled awake, looks around, and slowly nods off again by his bonfire.
+    Laid out for the lid turned 180 degrees (cut corner bottom right), then rotated back."""
     n = 200
     rng = random.Random(8)
-    x, g = 186, 171
-    fire_x = 80
+    x, g = 70, 150                        # on a low step, so the cut corner leaves room for his sword
+    fire_x, ledge = 134, 110              # the bonfire on a rock ledge to his right
     wake, asleep = 120, 178
     z_spawns = [0, 25, 50, 75, 100]       # one per snore; after waking there's a pause before the next
     flames = fire_layers(n, 16, 11, 26, seed=12, top=30)
@@ -916,10 +917,11 @@ def siegmeyer_napping():
     frames = []
     for t in range(n):
         img, d = new_canvas()
-        d.polygon([(0, H), (0, 170), (W, 170), (W, H)], fill=35)
+        d.polygon([(0, H), (0, g), (110, g), (118, 132), (126, ledge), (W, ledge), (W, H)], fill=35)
         flicker = flames[t].crop((10, 30, 30, 70)).resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
-        d.ellipse(box(fire_x + 20, g, 90, 8), fill=int(45 + 0.15 * flicker))              # firelight
-        draw_bonfire(img, d, fire_x, g - 2, flames[t], 1.3)
+        d.ellipse(box(x + 10, g + 1, 70, 6), fill=int(40 + 0.12 * flicker))                # firelight on
+        d.ellipse(box(fire_x, ledge + 2, 46, 7), fill=int(50 + 0.15 * flicker))           # his step and the ledge
+        draw_bonfire(img, d, fire_x, ledge, flames[t], 1.3)
         awake = wake <= t < asleep
         lift = 7 * math.exp(-max(0, t - wake) / 3) * ease((t - wake + 1) / 2) if awake else 0.0
         if awake:
@@ -933,15 +935,15 @@ def siegmeyer_napping():
         def figure(ld):
             draw_siegmeyer(ld, x, g, nod, look, breath, lift)
             if awake and t < wake + 14:                                                   # startled "!"
-                ld.line([(x + 30, g - 150), (x + 30, g - 124)], fill=255, width=6)
-                ld.ellipse(box(x + 30, g - 115, 4), fill=255)
+                ld.line([(x + 34, g - 136), (x + 34, g - 110)], fill=255, width=6)
+                ld.ellipse(box(x + 34, g - 101, 4), fill=255)
         paste_figure(img, figure, lambda y: 0.85 + 0.15 * flicker / 255)
         sparks = []
         for t0, ox, drift in embers:
             age = (t - t0) % n
             if age < 26:
                 sparks.append((fire_x + ox + drift * age + 3 * math.sin(age * 0.4),
-                               g - 70 - age * 3, 1.8, 220 * (1 - age / 26)))
+                               ledge - 70 - age * 3, 1.8, 220 * (1 - age / 26)))
         draw_particles(d, sparks)
         for t0 in z_spawns:
             age = (t - t0) % n
@@ -949,8 +951,8 @@ def siegmeyer_napping():
                 continue          # the Z's pop when he wakes
             k = age / 60
             fade = min(1.0, age / 5) * (1 - k ** 2)
-            draw_z(d, x + 22 + 48 * k + 5 * math.sin(age * 0.2), g - 80 - 95 * k, 8 + 22 * k, 235 * fade)
-        frames.append(img)
+            draw_z(d, x + 4 + 26 * k + 5 * math.sin(age * 0.2), g - 96 - 46 * k, 8 + 16 * k, 235 * fade)
+        frames.append(img.transpose(Image.Transpose.ROTATE_180))
     return frames
 
 SCENES = {
