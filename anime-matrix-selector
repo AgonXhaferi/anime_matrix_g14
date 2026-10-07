@@ -15,14 +15,15 @@ gi.require_version('Gsk', '4.0')
 gi.require_version('Graphene', '1.0')
 gi.require_version('Pango', '1.0')
 from gi.repository import Gtk, GLib, Gio, Gdk, GObject, Gsk, Graphene, Pango
-from PIL import Image, ImageSequence
+from PIL import Image, ImageChops, ImageDraw, ImageOps, ImageSequence
 
 DEFAULT_TARGET = "/usr/share/asusd/anime/asus/rog/Sunset.gif"
 ACTIVE_SYMLINK = os.path.expanduser("~/.config/anime-matrix/active.gif")
 MODE_ENV = os.path.expanduser("~/.config/anime-matrix/mode.env")
 CUSTOM_LIST = os.path.expanduser("~/.config/anime-matrix/custom-gifs.txt")  # one path per line
 SERVICE = "anime-matrix.service"
-MATRIX_SIZE = (74, 36)  # native diagonal LED grid; anything else needs scaling
+# Native diagonal GIF sizes: ASUS's stock art is 74x36, the GA402 lid itself reads 74x39
+NATIVE_SIZES = {(74, 36), (74, 39)}
 CUSTOM_CATEGORY = "Custom"
 THUMB_SIZE = (148, 72)    # 2x the matrix, so native GIFs scale by a whole number
 THUMB_MAX_FRAMES = 120    # longer GIFs skip frames in thumbnails to bound memory
@@ -96,12 +97,137 @@ def scan_animations():
     return results
 
 def anime_command_for(path):
-    """pixel-gif only renders correctly for GIFs drawn for the 74x36 diagonal grid."""
+    """pixel-gif only renders correctly for GIFs drawn for the diagonal LED grid."""
     try:
         with Image.open(path) as im:
-            return "pixel-gif" if im.size == MATRIX_SIZE else "gif"
+            return "pixel-gif" if im.size in NATIVE_SIZES else "gif"
     except Exception:
         return "gif"
+
+# ---- GA402 lid simulation -------------------------------------------------------------
+# Geometry and sampling follow asusctl 6.3.8 (rog-anime/src/image.rs and diagonal.rs),
+# so the preview shows what asusctl actually sends to each LED.
+LED_ROWS = 61                      # physical rows, top to bottom
+DIAG_HEIGHT = 39                   # pixel-gif reads a 74x39 diagonal grid on this lid
+CM_PER_LED_X, CM_PER_LED_Y = 0.77, 0.283   # LED spacing within a row / between rows
+
+def led_row_start(r):
+    """First LED's x position; rows below 11 start further right (diagonal bottom-left cut)."""
+    return 0 if r <= 11 else (r + 1) // 2 - 5
+
+def led_row_length(r):
+    return 34 if r <= 11 else 39 - r // 2
+
+# Every LED as (row, index in row, x position); odd rows sit half an LED to the left
+LEDS = [(r, i, led_row_start(r) + i - 0.5 * (r % 2))
+        for r in range(LED_ROWS) for i in range(led_row_length(r))]
+
+def diagonal_pixel(r, i):
+    """Image pixel (x, y) that pixel-gif shows on LED i of row r."""
+    x0, y0 = ((r + 1) // 2, 5 - r // 2) if r <= 11 else (r - 5, 0)
+    return x0 + i, DIAG_HEIGHT - 1 - y0 - i
+
+def scaled_samples(w, h):
+    """Per LED, the in-bounds pixel indices asusctl gif averages (scale 1, no rotation)."""
+    base = min(35.5 * CM_PER_LED_X / w, LED_ROWS * CM_PER_LED_Y / h)
+    sx, sy = CM_PER_LED_X / base, CM_PER_LED_Y / base   # image px per LED step
+    du, dv = (-0.5 * sx, 0.5 * sy), (0.5 * sx, 0.5 * sy)
+    steps = (0.0, 0.5, 1.0, 1.5)
+    result = []
+    for r, i, x in LEDS:
+        ox, oy = (x - 20) * sx + w / 2, (r - 0.5 - 20) * sy + h / 2   # LED (20, 20) is the center
+        samples = []
+        for u in steps:
+            for v in steps:
+                px, py = int(ox + u * du[0] + v * dv[0]), int(oy + u * du[1] + v * dv[1])
+                if 0 <= px < w and 0 <= py < h:
+                    samples.append(px + py * w)
+        result.append(samples)
+    return result
+
+class LedSampler:
+    """Turns RGBA frames of one GIF into per-LED brightness (bytes, one per LED)."""
+    def __init__(self, size):
+        w, h = size
+        self.native = size in NATIVE_SIZES
+        if self.native:
+            # pixel-gif uses the red channel of opaque pixels
+            self.offsets = []
+            for r, i, _ in LEDS:
+                x, y = diagonal_pixel(r, i)
+                self.offsets.append((x + y * w) * 4 if 0 <= x < w and 0 <= y < h else -1)
+        else:
+            self.samples = [[p * 4 for p in s] for s in scaled_samples(w, h)]
+
+    def sample(self, data):
+        if self.native:
+            return bytes(data[o] if o >= 0 and data[o + 3] == 255 else 0 for o in self.offsets)
+        out = bytearray(len(self.samples))
+        for n, samples in enumerate(self.samples):
+            if not samples:
+                continue
+            total = lit = 0
+            for o in samples:
+                if data[o + 3] == 255:   # asusctl ignores pixels that aren't fully opaque
+                    total += (data[o] + data[o + 1] + data[o + 2]) // 3
+                    lit += 1
+            k = len(samples)
+            out[n] = int((total / k) * (lit / k))
+        return bytes(out)
+
+class LidRenderer:
+    """Draws per-LED brightness as round dots in the lid's physical layout.
+
+    Rows of each parity (even/odd) form a regular grid, so each is drawn by enlarging a
+    tiny one-pixel-per-LED image and masking it with pre-drawn dots. That keeps the
+    per-frame work in Pillow's C code instead of drawing 1700 circles in Python.
+    """
+    CELL_W, ROW_H = 16, 6          # px per LED horizontally / per row (~1.4x the preview size)
+    DOT_RADIUS = 4.5
+    OFF_LEVEL = 26                 # unlit LEDs stay faintly visible to show the lid's shape
+
+    def __init__(self):
+        cw, rh = self.CELL_W, self.ROW_H
+        self.size = (35 * cw, (LED_ROWS + 1) * rh)
+        self.lut = bytes(self.OFF_LEVEL + v * (255 - self.OFF_LEVEL) // 255 for v in range(256))
+        self.parities = []
+        for p in (0, 1):
+            ncols, nrows = (34, 31) if p == 0 else (35, 30)
+            index = [-1] * (ncols * nrows)   # grid cell -> LED number
+            ss = 4                           # supersample the dots for smooth edges
+            mask = Image.new("L", (self.size[0] * ss, self.size[1] * ss), 0)
+            draw = ImageDraw.Draw(mask)
+            for n, (r, i, x) in enumerate(LEDS):
+                if r % 2 != p:
+                    continue
+                index[(r // 2) * ncols + int(x + 0.5 * p)] = n
+                cx, cy, rad = (x + 1) * cw * ss, (r + 1) * rh * ss, self.DOT_RADIUS * ss
+                draw.ellipse((cx - rad, cy - rad, cx + rad, cy + rad), fill=255)
+            mask = mask.resize(self.size, Image.Resampling.BOX)
+            offset = (cw // 2, 0) if p == 0 else (0, rh)
+            self.parities.append((ncols, nrows, index, mask, offset))
+
+    def render(self, levels):
+        """Greyscale PIL image of the lid, as seen from outside, for one frame of per-LED levels.
+
+        asusctl numbers rows from the inside of the lid, so the result is flipped top to
+        bottom; that is the orientation in which ASUS's stock text animations read correctly.
+        """
+        lut = self.lut
+        layers = []
+        for ncols, nrows, index, mask, offset in self.parities:
+            grid = bytes(lut[levels[n]] if n >= 0 else 0 for n in index)
+            small = Image.frombytes("L", (ncols, nrows), grid)
+            big = small.resize((ncols * self.CELL_W, nrows * 2 * self.ROW_H), Image.Resampling.NEAREST)
+            canvas = Image.new("L", self.size, 0)
+            canvas.paste(big, offset)
+            layers.append(ImageChops.multiply(canvas, mask))
+        return ImageOps.flip(ImageChops.lighter(*layers))
+
+    def texture(self, levels):
+        img = self.render(levels)
+        return Gdk.MemoryTexture.new(img.width, img.height, Gdk.MemoryFormat.G8,
+                                     GLib.Bytes.new(img.tobytes()), img.width)
 
 def run_cmd(args):
     """Run a command, returning (ok, error message)."""
@@ -275,11 +401,15 @@ class AnimationTile(Gtk.FlowBoxChild):
 
 class GifPlayer:
     """Renders and loops animated GIFs frame-by-frame inside Gtk.Picture."""
-    def __init__(self, picture_widget):
+    def __init__(self, picture_widget, is_paused=lambda: False):
+        self.is_paused = is_paused  # checked each frame; paused frames don't advance
         self.paintable = PixelPaintable()
         picture_widget.set_paintable(self.paintable)
-        self.frames = []
+        self.frames = []        # (plain texture, per-LED levels, duration ms)
         self.frame_idx = 0
+        self.shown_idx = 0
+        self.lid_view = True    # draw as the lid's LEDs instead of the raw GIF
+        self.lid = None         # LidRenderer, built on first use
         self.timer_id = None
         self.load_token = 0  # bumped per load so a slow decode can't overwrite a newer pick
 
@@ -299,15 +429,18 @@ class GifPlayer:
         frames, info_str = [], None
         try:
             with Image.open(path) as im:
+                sampler = LedSampler(im.size)
                 info_str = f"{im.size[0]} × {im.size[1]} px"
                 if getattr(im, "is_animated", False) and getattr(im, "n_frames", 1) > 1:
                     info_str += f" • {im.n_frames} frames"
+                info_str += " • pixel-perfect" if sampler.native else " • scaled to fit"
                 for frame in ImageSequence.Iterator(im):
                     if token != self.load_token:
                         return  # a different GIF was picked meanwhile
                     rgba = frame.convert("RGBA")
+                    data = rgba.tobytes()
                     dur = frame.info.get("duration", 40)
-                    frames.append((rgba.width, rgba.height, rgba.tobytes(), max(dur, 20)))
+                    frames.append((rgba.width, rgba.height, data, sampler.sample(data), max(dur, 20)))
         except Exception as e:
             print(f"Error loading GIF preview for {path}: {e}")
             frames, info_str = [], None
@@ -316,18 +449,35 @@ class GifPlayer:
     def _show(self, token, frames, info_str, on_loaded):
         if token != self.load_token:
             return False
-        self.frames = [(make_texture(w, h, data), dur) for w, h, data, dur in frames]
+        self.frames = [(make_texture(w, h, data), levels, dur) for w, h, data, levels, dur in frames]
         self.frame_idx = 0
         if self.frames:
-            self.next_frame()
+            self.next_frame(first=True)
         on_loaded(info_str)
         return False
 
-    def next_frame(self):
+    def set_lid_view(self, on):
+        self.lid_view = on
+        if self.frames:
+            self.paint(self.shown_idx)
+
+    def paint(self, idx):
+        tex, levels, _ = self.frames[idx]
+        if self.lid_view:
+            if self.lid is None:
+                self.lid = LidRenderer()
+            tex = self.lid.texture(levels)
+        self.paintable.set_texture(tex)
+        self.shown_idx = idx
+
+    def next_frame(self, first=False):
         if not self.frames:
             return False
-        tex, delay = self.frames[self.frame_idx]
-        self.paintable.set_texture(tex)
+        if self.is_paused() and not first:  # always show the first frame
+            self.timer_id = GLib.timeout_add(250, self.next_frame)
+            return False
+        self.paint(self.frame_idx)
+        delay = self.frames[self.frame_idx][2]
         if len(self.frames) > 1:
             self.frame_idx = (self.frame_idx + 1) % len(self.frames)
             self.timer_id = GLib.timeout_add(delay, self.next_frame)
@@ -390,6 +540,12 @@ flowboxchild.anim-tile.active-anim {
     font-weight: bold;
     opacity: 0.8;
     margin-top: 8px;
+}
+.view-toggle button {
+    background: alpha(currentColor, 0.06);
+}
+.view-toggle button:checked {
+    background: alpha(#3584e4, 0.45);
 }
 .settings-card {
     border-radius: 12px;
@@ -462,12 +618,24 @@ class AniMeMatrixApp(Gtk.Application):
         self.preview_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.preview_card.add_css_class("preview-card")
 
+        view_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, halign=Gtk.Align.END)
+        view_row.add_css_class("linked")
+        view_row.add_css_class("view-toggle")
+        self.btn_view_lid = Gtk.ToggleButton(label="On the lid", active=True)
+        self.btn_view_lid.set_tooltip_text("Simulate the lid's LEDs, as seen from outside")
+        btn_view_plain = Gtk.ToggleButton(label="Plain GIF", group=self.btn_view_lid)
+        view_row.append(self.btn_view_lid)
+        view_row.append(btn_view_plain)
+        self.preview_card.append(view_row)
+
         self.picture = Gtk.Picture()
         self.picture.set_can_shrink(True)
-        self.picture.set_size_request(370, 180)  # 5x the 74x36 matrix
+        self.picture.set_size_request(380, 245)  # fits the lid's shape; 74x36 GIFs show at 5x
         self.preview_card.append(self.picture)
 
-        self.gif_player = GifPlayer(self.picture)
+        # Drawing the lid costs some CPU, so like the thumbnails it pauses when unfocused
+        self.gif_player = GifPlayer(self.picture, is_paused=lambda: not win.is_active())
+        self.btn_view_lid.connect("toggled", lambda b: self.gif_player.set_lid_view(b.get_active()))
 
         self.lbl_current_path = Gtk.Label(xalign=0.5)
         self.lbl_current_path.add_css_class("path-label")

@@ -15,6 +15,10 @@ ASUS ROG Zephyrus G14 (tested on a GA402RK), on top of [asusctl](https://gitlab.
   `anime-matrix.service`, a systemd user service that plays it with `asusctl` on a loop.
 - GIFs drawn for the native 74×36 LED grid play pixel-perfect (`asusctl anime pixel-gif`);
   any other size is scaled to fit (`asusctl anime gif`). The choice is saved in `mode.env`.
+- The preview has an *On the lid* view that simulates the GA402's 1,449 LEDs as seen from
+  outside the lid, using asusctl 6.3.8's own geometry and sampling (diagonal mapping for
+  native GIFs, 16-sample averaging for scaled ones). *Plain GIF* shows the file itself.
+  Native means 74×36 (ASUS's stock art) or 74×39 (the GA402's full diagonal grid).
 - *Display Settings* shows asusd's brightness and "off when unplugged / lid closed /
   suspended" options and changes them instantly over D-Bus. It also updates when they
   are changed elsewhere, e.g. with `asusctl anime --brightness`.
