@@ -686,37 +686,51 @@ def draw_bonfire(img, d, x, g, flame):
     d.line([(x - 2, g + 2), (x + 4, g - 52)], fill=210, width=3)                          # coiled sword
     d.line([(x - 4, g - 46), (x + 11, g - 48)], fill=210, width=3)
 
+def limb(d, pts, width, level):
+    """A line with a dark border, so limbs stay separate from the body behind them."""
+    d.line(pts, fill=0, width=width + 4, joint="curve")
+    d.line(pts, fill=level, width=width, joint="curve")
+
 def draw_solaire(d, x, g, praise, breath):
     """Solaire facing out; praise 0 is standing at ease, 1 is the full Praise the Sun pose."""
     lean = 6 * praise                       # arches back into the pose
     spread = 5 * praise
-    d.line([(x - 6, g - 36), (x - 9 - spread, g)], fill=150, width=7)                     # legs
-    d.line([(x + 6, g - 36), (x + 9 + spread, g)], fill=150, width=7)
-    shoulders = [(x - 17, g - 84 - lean - breath), (x + 17, g - 84 - lean - breath)]
-    for k, (sx, sy) in enumerate(shoulders):                                              # arms
-        side = -1 if k == 0 else 1
-        rest_hand = (sx + side * 3, g - 44)
-        up_hand = (x + side * 44, g - 138)
-        hand = (lerp(rest_hand[0], up_hand[0], praise), lerp(rest_hand[1], up_hand[1], praise))
-        elbow = (lerp(sx, hand[0], 0.5) + side * 5 * (1 - praise), lerp(sy, hand[1], 0.5))
-        d.line([(sx, sy), elbow, hand], fill=170, width=7)
-        d.ellipse(box(*hand, 4), fill=220)
-    torso = [shoulders[0], shoulders[1], (x + 13, g - 36), (x + 9, g - 22), (x - 9, g - 22), (x - 13, g - 36)]
-    d.polygon(torso, fill=55, outline=200, width=2)                                       # tabard
-    ex, ey = x, g - 60 - lean
+    for side in (-1, 1):                                                                  # legs and boots
+        hip, foot = (x + side * 6, g - 36), (x + side * (10 + spread), g - 3)
+        limb(d, [hip, (lerp(hip[0], foot[0], 0.5) + side, g - 18), foot], 6, 140)
+        d.rectangle((foot[0] - 4, g - 7, foot[0] + 4, g), fill=210)
+    top = g - 84 - lean - breath
+    torso = [(x - 16, top), (x + 16, top), (x + 10, g - 38), (x - 10, g - 38)]
+    d.polygon(torso, fill=45, outline=210, width=2)                                       # tabard
+    d.polygon([(x - 11, g - 38), (x + 11, g - 38), (x + 13, g - 25), (x - 13, g - 25)],
+              fill=120, outline=0, width=1)                                               # mail skirt
+    d.line([(x - 11, g - 39), (x + 11, g - 39)], fill=230, width=3)                       # belt
+    ex, ey = x, g - 62 - lean
     for k in range(8):                                                                    # sun emblem
         a = TAU * k / 8
         d.line([(ex, ey), (ex + 9 * math.cos(a), ey + 9 * math.sin(a))], fill=200, width=2)
     d.ellipse(box(ex, ey, 5), fill=255)
-    hy = g - 86 - lean - breath
-    d.rectangle((x - 9, hy - 26, x + 9, hy), fill=165, outline=225, width=2)             # bucket helm
-    d.line([(x - 9, hy - 16), (x + 9, hy - 16)], fill=20, width=2)                        # visor slit
+    for side in (-1, 1):                                                                  # arms
+        sx, sy = x + side * 18, top + 3
+        rest_hand = (x + side * 24, g - 46)
+        up_hand = (x + side * 40, g - 136)
+        hand = (lerp(rest_hand[0], up_hand[0], praise), lerp(rest_hand[1], up_hand[1], praise))
+        elbow = (lerp(sx, hand[0], 0.5) + side * 6 * (1 - praise), lerp(sy, hand[1], 0.5))
+        limb(d, [(sx, sy), elbow, hand], 5, 165)
+        d.ellipse(box(*hand, 4), fill=230, outline=0, width=1)                            # gauntlet
+        d.ellipse(box(sx, sy, 7, 5), fill=200, outline=0, width=2)                        # pauldron
+    hy = top - 3
+    d.rectangle((x - 11, hy - 28, x + 11, hy + 2), fill=0)                                # gap at the neck
+    d.rectangle((x - 9, hy - 26, x + 9, hy), fill=175, outline=235, width=2)             # bucket helm
+    d.line([(x - 9, hy - 16), (x + 9, hy - 16)], fill=0, width=2)                         # visor slit
     d.line([(x, hy - 15), (x, hy - 3)], fill=40, width=2)
 
 def praise_the_sun():
+    """Laid out for the lid turned 180 degrees (cut corner bottom right), then rotated back."""
     n = 170
     rng = random.Random(31)
-    fire_x, solaire_x, g = 110, 205, 171
+    solaire_x, g = 52, 171
+    fire_x, ledge = 122, 121              # the bonfire sits on a rock ledge above the cut corner
     flames = fire_layers(n, 16, 16, 30, seed=5, top=30)
     embers = [(int(k * n / 14 + rng.uniform(0, 8)), rng.uniform(-8, 8), rng.uniform(-0.6, 0.6))
               for k in range(14)]
@@ -727,31 +741,28 @@ def praise_the_sun():
         flare = math.exp(-max(0, t - 66) / 5) * ease((t - 60) / 6)
         img, d = new_canvas(55 * flare)
         if sun > 0:
-            sx, sy = solaire_x, lerp(-30, 26, sun)
+            sx, sy = solaire_x, lerp(-30, 24, sun)
             spin = t * 0.04
-            rays = []
             for k in range(16):
                 a = spin + TAU * k / 16
                 length = 60 + 25 * (k % 2) + 60 * flare
-                rays.append((a, length))
-            for a, length in rays:
                 d.line([(sx + 18 * math.cos(a), sy + 18 * math.sin(a)),
                         (sx + length * math.cos(a), sy + length * math.sin(a))],
                        fill=int(sun * (70 + 90 * flare)), width=4)
             d.ellipse(box(sx, sy, 15), fill=int(sun * 140))
             d.ellipse(box(sx, sy, 11), fill=int(sun * 255))
-        d.polygon([(0, H), (0, 170), (W, 170), (W, H)], fill=40)                          # ground
-        d.ellipse(box(fire_x, g + 2, 50, 8), fill=60)                                     # firelight
-        draw_bonfire(img, d, fire_x, g, flames[t])
+        d.polygon([(0, H), (0, 170), (68, 170), (80, 150), (92, ledge), (W, ledge), (W, H)], fill=40)
+        d.ellipse(box(fire_x, ledge + 2, 46, 7), fill=60)                                 # firelight
+        draw_bonfire(img, d, fire_x, ledge, flames[t])
         sparks = []
         for t0, ox, drift in embers:
             age = (t - t0) % n
             if age < 30:
                 sparks.append((fire_x + ox + drift * age + 3 * math.sin(age * 0.4),
-                               g - 50 - age * 3.2, 1.8, 230 * (1 - age / 30)))
+                               ledge - 50 - age * 3.2, 1.8, 230 * (1 - age / 30)))
         draw_particles(d, sparks)
         draw_solaire(d, solaire_x, g, praise, 1.5 * cycle(t, n, 5))
-        frames.append(img)
+        frames.append(img.transpose(Image.Transpose.ROTATE_180))
     return frames
 
 def draw_z(d, x, y, size, level):
