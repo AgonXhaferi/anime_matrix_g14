@@ -1,0 +1,413 @@
+#!/usr/bin/env python3
+import os
+import sys
+import glob
+import subprocess
+import gi
+
+gi.require_version('Gtk', '4.0')
+gi.require_version('Gdk', '4.0')
+from gi.repository import Gtk, GLib, Gio, Gdk
+from PIL import Image, ImageSequence
+
+DEFAULT_TARGET = "/usr/share/asusd/anime/asus/rog/Sunset.gif"
+ACTIVE_SYMLINK = os.path.expanduser("~/.config/anime-matrix/active.gif")
+
+SEARCH_DIRECTORIES = [
+    ("/usr/share/asusd/anime/asus/rog", "ROG (Stock)"),
+    ("/usr/share/asusd/anime/asus/gaming", "Gaming (Stock)"),
+    ("/usr/share/asusd/anime/asus/music", "Music (Stock)"),
+    ("/usr/share/asusd/anime/asus/trend", "Trend (Stock)"),
+    ("/usr/share/asusd/anime/asus/festive", "Festive (Stock)"),
+    ("/usr/share/asusd/anime/custom", "Custom (Stock)"),
+    (os.path.expanduser("~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Normal"), "Armoury Crate Normal"),
+    (os.path.expanduser("~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Patterns"), "Armoury Crate Patterns"),
+    (os.path.expanduser("~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Alan_Walker"), "Alan Walker Collection"),
+]
+
+def get_current_active_path():
+    if os.path.islink(ACTIVE_SYMLINK):
+        try:
+            target = os.path.realpath(ACTIVE_SYMLINK)
+            if os.path.exists(target):
+                return target
+        except Exception:
+            pass
+    return DEFAULT_TARGET
+
+def scan_animations():
+    results = []
+    seen_paths = set()
+    active_path = get_current_active_path()
+
+    for folder, category in SEARCH_DIRECTORIES:
+        if os.path.isdir(folder):
+            for file in sorted(os.listdir(folder)):
+                if file.endswith(".gif") and not file.endswith("_thumbnail.gif"):
+                    path = os.path.join(folder, file)
+                    if path not in seen_paths:
+                        seen_paths.add(path)
+                        display_name = f"[{category}]  {file}"
+                        results.append((display_name, path))
+
+    # Ensure active_path or DEFAULT_TARGET is prioritized at index 0
+    target_idx = 0
+    for idx, (name, path) in enumerate(results):
+        if path == active_path or path == DEFAULT_TARGET or os.path.basename(path) == "Sunset.gif":
+            item = results.pop(idx)
+            results.insert(0, item)
+            break
+
+    return results, 0
+
+class GifPlayer:
+    """Renders and loops animated GIFs frame-by-frame inside Gtk.Picture."""
+    def __init__(self, picture_widget):
+        self.picture = picture_widget
+        self.frames = []
+        self.frame_idx = 0
+        self.timer_id = None
+
+    def stop(self):
+        if self.timer_id:
+            GLib.source_remove(self.timer_id)
+            self.timer_id = None
+
+    def load(self, path):
+        self.stop()
+        if not path or not os.path.exists(path):
+            return None
+
+        try:
+            im = Image.open(path)
+            self.frames = []
+            info_str = f"{im.size[0]} × {im.size[1]} px"
+
+            # Check if animated
+            is_anim = getattr(im, "is_animated", False) and getattr(im, "n_frames", 1) > 1
+            if is_anim:
+                info_str += f" • {im.n_frames} frames"
+                for frame in ImageSequence.Iterator(im):
+                    rgba = frame.convert("RGBA")
+                    raw_bytes = rgba.tobytes()
+                    glib_bytes = GLib.Bytes.new(raw_bytes)
+                    tex = Gdk.MemoryTexture.new(
+                        rgba.width, rgba.height,
+                        Gdk.MemoryFormat.R8G8B8A8,
+                        glib_bytes, rgba.width * 4
+                    )
+                    dur = frame.info.get("duration", 40)
+                    self.frames.append((tex, max(dur, 20)))
+            else:
+                rgba = im.convert("RGBA")
+                raw_bytes = rgba.tobytes()
+                glib_bytes = GLib.Bytes.new(raw_bytes)
+                tex = Gdk.MemoryTexture.new(
+                    rgba.width, rgba.height,
+                    Gdk.MemoryFormat.R8G8B8A8,
+                    glib_bytes, rgba.width * 4
+                )
+                self.frames.append((tex, 1000))
+
+            self.frame_idx = 0
+            if self.frames:
+                self.next_frame()
+            return info_str
+        except Exception as e:
+            print(f"Error loading GIF preview for {path}: {e}")
+            return None
+
+    def next_frame(self):
+        if not self.frames:
+            return False
+        tex, delay = self.frames[self.frame_idx]
+        self.picture.set_paintable(tex)
+        if len(self.frames) > 1:
+            self.frame_idx = (self.frame_idx + 1) % len(self.frames)
+            self.timer_id = GLib.timeout_add(delay, self.next_frame)
+        return False
+
+CSS_STYLING = """
+window {
+    font-family: system-ui, -apple-system, sans-serif;
+}
+.preview-card {
+    background: #0f0f11;
+    border-radius: 12px;
+    border: 1px solid #2a2a2e;
+    padding: 16px;
+}
+.title-label {
+    font-size: 16px;
+    font-weight: 700;
+}
+.path-label {
+    font-size: 11px;
+    opacity: 0.75;
+    font-family: monospace;
+}
+.active-badge {
+    font-size: 12px;
+    font-weight: bold;
+    color: #33d17a;
+    background: rgba(51, 209, 122, 0.15);
+    border-radius: 6px;
+    padding: 3px 8px;
+}
+.status-success {
+    color: #33d17a;
+    font-weight: bold;
+    font-size: 13px;
+}
+.status-error {
+    color: #e01b24;
+    font-weight: bold;
+    font-size: 13px;
+}
+.status-info {
+    color: #3584e4;
+    font-weight: bold;
+    font-size: 13px;
+}
+"""
+
+class AniMeMatrixApp(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="org.rog.animematrix.selector", flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.animations, self.default_idx = scan_animations()
+        self.gif_player = None
+
+    def do_activate(self):
+        win = Gtk.ApplicationWindow(application=self, title="AniMe Matrix Selector")
+        win.set_default_size(560, 520)
+        win.set_resizable(False)
+
+        # Apply CSS
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_data(CSS_STYLING.encode())
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        main_box.set_margin_top(18)
+        main_box.set_margin_bottom(18)
+        main_box.set_margin_start(20)
+        main_box.set_margin_end(20)
+        win.set_child(main_box)
+
+        # Header Title
+        title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        vbox_titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        h_title = Gtk.Label(label="AniMe Matrix Animation Selector", xalign=0)
+        h_title.add_css_class("title-label")
+        h_subtitle = Gtk.Label(label="ROG Zephyrus G14 AniMe Matrix Manager", xalign=0)
+        h_subtitle.add_css_class("path-label")
+        vbox_titles.append(h_title)
+        vbox_titles.append(h_subtitle)
+        title_box.append(vbox_titles)
+
+        lbl_spacer_h = Gtk.Label()
+        lbl_spacer_h.set_hexpand(True)
+        title_box.append(lbl_spacer_h)
+
+        self.lbl_badge = Gtk.Label(label="● Active in Background")
+        self.lbl_badge.add_css_class("active-badge")
+        title_box.append(self.lbl_badge)
+
+        main_box.append(title_box)
+
+        # Dropdown selection section
+        select_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        lbl_dropdown = Gtk.Label(label="Select Animation:", xalign=0)
+        lbl_dropdown.add_css_class("heading")
+
+        labels = [item[0] for item in self.animations]
+        self.dropdown = Gtk.DropDown.new_from_strings(labels)
+        self.dropdown.set_selected(self.default_idx)
+        self.dropdown.connect("notify::selected", self.on_dropdown_changed)
+
+        select_box.append(lbl_dropdown)
+        select_box.append(self.dropdown)
+        main_box.append(select_box)
+
+        # Preview Card
+        self.preview_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.preview_card.add_css_class("preview-card")
+
+        self.picture = Gtk.Picture()
+        self.picture.set_content_fit(Gtk.ContentFit.CONTAIN)
+        self.picture.set_can_shrink(True)
+        self.picture.set_size_request(320, 180)
+        self.preview_card.append(self.picture)
+
+        self.gif_player = GifPlayer(self.picture)
+
+        self.lbl_current_path = Gtk.Label(xalign=0.5)
+        self.lbl_current_path.add_css_class("path-label")
+        self.preview_card.append(self.lbl_current_path)
+
+        main_box.append(self.preview_card)
+
+        # Status Label
+        self.lbl_status = Gtk.Label(label="", xalign=0.5)
+        main_box.append(self.lbl_status)
+
+        # Action Buttons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        btn_box.set_homogeneous(True)
+
+        self.btn_apply = Gtk.Button(label="★ Set as Main Running Animation")
+        self.btn_apply.add_css_class("suggested-action")
+        self.btn_apply.connect("clicked", self.on_apply_clicked)
+        btn_box.append(self.btn_apply)
+
+        self.btn_off = Gtk.Button(label="⏹ Turn Off Lid Display")
+        self.btn_off.connect("clicked", self.on_turn_off_clicked)
+        btn_box.append(self.btn_off)
+
+        main_box.append(btn_box)
+
+        # Bottom secondary tools
+        bottom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+
+        btn_open_folder = Gtk.Button(label="📁 Open Folder")
+        btn_open_folder.connect("clicked", self.on_open_folder_clicked)
+        bottom_box.append(btn_open_folder)
+
+        btn_add_custom = Gtk.Button(label="➕ Browse Custom GIF...")
+        btn_add_custom.connect("clicked", self.on_add_custom_clicked)
+        bottom_box.append(btn_add_custom)
+
+        main_box.append(bottom_box)
+
+        # Start initial preview
+        self.update_preview()
+        self.check_service_status()
+
+        win.connect("destroy", self.on_window_destroy)
+        win.present()
+
+    def get_selected_path(self):
+        idx = self.dropdown.get_selected()
+        if 0 <= idx < len(self.animations):
+            return self.animations[idx][1]
+        return None
+
+    def update_preview(self):
+        path = self.get_selected_path()
+        if path and os.path.exists(path):
+            info = self.gif_player.load(path)
+            fname = os.path.basename(path)
+            if info:
+                self.lbl_current_path.set_text(f"{fname}  •  {info}")
+            else:
+                self.lbl_current_path.set_text(fname)
+        else:
+            self.gif_player.stop()
+            self.lbl_current_path.set_text("File not found")
+
+    def check_service_status(self):
+        res = subprocess.run(
+            ["systemctl", "--user", "is-active", "anime-matrix.service"],
+            capture_output=True, text=True
+        )
+        if res.stdout.strip() == "active":
+            active_file = os.path.basename(get_current_active_path())
+            self.lbl_badge.set_visible(True)
+            self.lbl_badge.set_text(f"● Active: {active_file}")
+        else:
+            self.lbl_badge.set_text("○ Matrix Inactive")
+
+    def on_dropdown_changed(self, dropdown, pspec):
+        self.update_preview()
+        self.lbl_status.set_text("")
+
+    def on_apply_clicked(self, button):
+        path = self.get_selected_path()
+        if not path or not os.path.exists(path):
+            self.set_status("Selected file does not exist", "status-error")
+            return
+
+        filename = os.path.basename(path)
+
+        # 0. Ensure display is enabled in hardware
+        subprocess.run(["asusctl", "anime", "--enable-display", "true"], check=False)
+
+        # 1. Update symlink ~/.config/anime-matrix/active.gif
+        os.makedirs(os.path.dirname(ACTIVE_SYMLINK), exist_ok=True)
+        if os.path.islink(ACTIVE_SYMLINK) or os.path.exists(ACTIVE_SYMLINK):
+            os.remove(ACTIVE_SYMLINK)
+        os.symlink(path, ACTIVE_SYMLINK)
+
+        # 2. Restart background systemd user service
+        subprocess.run(["systemctl", "--user", "restart", "anime-matrix.service"], check=False)
+
+        self.set_status(f"✓ '{filename}' is now active & playing on your lid!", "status-success")
+        self.check_service_status()
+
+    def on_turn_off_clicked(self, button):
+        subprocess.run(["systemctl", "--user", "stop", "anime-matrix.service"], check=False)
+        # Flush all LEDs to black (0) using black.png, then disable display
+        black_png = os.path.expanduser("~/.config/anime-matrix/black.png")
+        if not os.path.exists(black_png):
+            try:
+                from PIL import Image
+                im = Image.new('L', (74, 36), color=0)
+                im.save(black_png)
+            except Exception:
+                pass
+        subprocess.run(["asusctl", "anime", "pixel-image", "--path", black_png], check=False)
+        subprocess.run(["asusctl", "anime", "--enable-display", "false"], check=False)
+        self.set_status("Matrix display turned off", "status-info")
+        self.check_service_status()
+
+    def on_open_folder_clicked(self, button):
+        path = self.get_selected_path()
+        if path:
+            folder = os.path.dirname(path)
+            subprocess.Popen(["xdg-open", folder])
+
+    def on_add_custom_clicked(self, button):
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Select a GIF for AniMe Matrix")
+        gif_filter = Gtk.FileFilter()
+        gif_filter.set_name("GIF Animations")
+        gif_filter.add_pattern("*.gif")
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(gif_filter)
+        dialog.set_filters(filters)
+
+        def on_file_selected(dialog, result):
+            try:
+                gfile = dialog.open_finish(result)
+                if gfile:
+                    path = gfile.get_path()
+                    if path and path.endswith(".gif"):
+                        name = f"[Custom]  {os.path.basename(path)}"
+                        self.animations.append((name, path))
+                        labels = [item[0] for item in self.animations]
+                        model = Gtk.StringList.new(labels)
+                        self.dropdown.set_model(model)
+                        self.dropdown.set_selected(len(self.animations) - 1)
+                        self.update_preview()
+                        self.set_status(f"Added '{os.path.basename(path)}'", "status-info")
+            except Exception:
+                pass
+
+        dialog.open(None, None, on_file_selected)
+
+    def set_status(self, text, css_class):
+        self.lbl_status.set_text(text)
+        self.lbl_status.remove_css_class("status-success")
+        self.lbl_status.remove_css_class("status-error")
+        self.lbl_status.remove_css_class("status-info")
+        self.lbl_status.add_css_class(css_class)
+
+    def on_window_destroy(self, window):
+        if self.gif_player:
+            self.gif_player.stop()
+
+if __name__ == "__main__":
+    app = AniMeMatrixApp()
+    sys.exit(app.run(sys.argv))

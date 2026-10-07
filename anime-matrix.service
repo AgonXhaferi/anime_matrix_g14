@@ -1,0 +1,12 @@
+[Unit]
+Description=ROG Zephyrus AniMe Matrix Background Runner
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/asusctl anime pixel-gif --path %h/.config/anime-matrix/active.gif --loops 0
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
