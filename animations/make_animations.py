@@ -14,7 +14,7 @@ import os
 import random
 import sys
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -654,6 +654,159 @@ def equalizer():
         frames.append(img)
     return frames
 
+# ---- Dark Souls ---------------------------------------------------------------------------
+def fire_layers(n, overlap, cols, rows, seed, top=24):
+    """Frames of a small looping campfire (same algorithm as Inferno), hottest in the middle."""
+    rng = random.Random(seed)
+    heat = [[0] * cols for _ in range(rows)]
+    mid = (cols - 1) / 2
+    frames = []
+    for t in range(60 + n + overlap):
+        heat[0] = [int(top * max(0.0, 1 - abs(x - mid) / (mid + 1)) ** 0.5 * rng.uniform(0.8, 1))
+                   for x in range(cols)]
+        for y in range(1, rows):
+            below, row = heat[y - 1], heat[y]
+            for x in range(cols):
+                dst = x + rng.randrange(3) - 1
+                if 0 <= dst < cols:
+                    row[dst] = max(0, below[x] - rng.choice((0, 1, 1, 2)))
+        if t >= 60:
+            data = bytes(int(255 * (h / top) ** 1.5) for y in reversed(range(rows)) for h in heat[y])
+            small = Image.frombytes("L", (cols, rows), data)
+            frames.append(small.resize((round(cols * MM_X / 2), round(rows * MM_Y)), Image.Resampling.BILINEAR))
+    return loop_crossfade(frames, overlap)
+
+def draw_bonfire(img, d, x, g, flame):
+    d.ellipse(box(x, g + 2, 22, 7), fill=80)                                              # ash mound
+    d.line([(x - 18, g - 1), (x + 4, g - 6)], fill=110, width=3)                          # charred bones
+    d.line([(x + 16, g - 1), (x - 2, g - 7)], fill=110, width=3)
+    fx, fy = round(x - flame.width / 2), round(g - flame.height + 4)
+    region = (fx, fy, fx + flame.width, fy + flame.height)
+    img.paste(ImageChops.lighter(img.crop(region), flame), region)
+    d.line([(x - 2, g + 2), (x + 4, g - 52)], fill=210, width=3)                          # coiled sword
+    d.line([(x - 4, g - 46), (x + 11, g - 48)], fill=210, width=3)
+
+def draw_solaire(d, x, g, praise, breath):
+    """Solaire facing out; praise 0 is standing at ease, 1 is the full Praise the Sun pose."""
+    lean = 6 * praise                       # arches back into the pose
+    spread = 5 * praise
+    d.line([(x - 6, g - 36), (x - 9 - spread, g)], fill=150, width=7)                     # legs
+    d.line([(x + 6, g - 36), (x + 9 + spread, g)], fill=150, width=7)
+    shoulders = [(x - 17, g - 84 - lean - breath), (x + 17, g - 84 - lean - breath)]
+    for k, (sx, sy) in enumerate(shoulders):                                              # arms
+        side = -1 if k == 0 else 1
+        rest_hand = (sx + side * 3, g - 44)
+        up_hand = (x + side * 44, g - 138)
+        hand = (lerp(rest_hand[0], up_hand[0], praise), lerp(rest_hand[1], up_hand[1], praise))
+        elbow = (lerp(sx, hand[0], 0.5) + side * 5 * (1 - praise), lerp(sy, hand[1], 0.5))
+        d.line([(sx, sy), elbow, hand], fill=170, width=7)
+        d.ellipse(box(*hand, 4), fill=220)
+    torso = [shoulders[0], shoulders[1], (x + 13, g - 36), (x + 9, g - 22), (x - 9, g - 22), (x - 13, g - 36)]
+    d.polygon(torso, fill=55, outline=200, width=2)                                       # tabard
+    ex, ey = x, g - 60 - lean
+    for k in range(8):                                                                    # sun emblem
+        a = TAU * k / 8
+        d.line([(ex, ey), (ex + 9 * math.cos(a), ey + 9 * math.sin(a))], fill=200, width=2)
+    d.ellipse(box(ex, ey, 5), fill=255)
+    hy = g - 86 - lean - breath
+    d.rectangle((x - 9, hy - 26, x + 9, hy), fill=165, outline=225, width=2)             # bucket helm
+    d.line([(x - 9, hy - 16), (x + 9, hy - 16)], fill=20, width=2)                        # visor slit
+    d.line([(x, hy - 15), (x, hy - 3)], fill=40, width=2)
+
+def praise_the_sun():
+    n = 170
+    rng = random.Random(31)
+    fire_x, solaire_x, g = 110, 205, 171
+    flames = fire_layers(n, 16, 16, 30, seed=5, top=30)
+    embers = [(int(k * n / 14 + rng.uniform(0, 8)), rng.uniform(-8, 8), rng.uniform(-0.6, 0.6))
+              for k in range(14)]
+    frames = []
+    for t in range(n):
+        praise = ease((t - 40) / 14) * (1 - ease((t - 112) / 14))
+        sun = ease((t - 48) / 22) * (1 - ease((t - 112) / 20))
+        flare = math.exp(-max(0, t - 66) / 5) * ease((t - 60) / 6)
+        img, d = new_canvas(55 * flare)
+        if sun > 0:
+            sx, sy = solaire_x, lerp(-30, 26, sun)
+            spin = t * 0.04
+            rays = []
+            for k in range(16):
+                a = spin + TAU * k / 16
+                length = 60 + 25 * (k % 2) + 60 * flare
+                rays.append((a, length))
+            for a, length in rays:
+                d.line([(sx + 18 * math.cos(a), sy + 18 * math.sin(a)),
+                        (sx + length * math.cos(a), sy + length * math.sin(a))],
+                       fill=int(sun * (70 + 90 * flare)), width=4)
+            d.ellipse(box(sx, sy, 15), fill=int(sun * 140))
+            d.ellipse(box(sx, sy, 11), fill=int(sun * 255))
+        d.polygon([(0, H), (0, 170), (W, 170), (W, H)], fill=40)                          # ground
+        d.ellipse(box(fire_x, g + 2, 50, 8), fill=60)                                     # firelight
+        draw_bonfire(img, d, fire_x, g, flames[t])
+        sparks = []
+        for t0, ox, drift in embers:
+            age = (t - t0) % n
+            if age < 30:
+                sparks.append((fire_x + ox + drift * age + 3 * math.sin(age * 0.4),
+                               g - 50 - age * 3.2, 1.8, 230 * (1 - age / 30)))
+        draw_particles(d, sparks)
+        draw_solaire(d, solaire_x, g, praise, 1.5 * cycle(t, n, 5))
+        frames.append(img)
+    return frames
+
+def draw_z(d, x, y, size, level):
+    s = size / 2
+    d.line([(x - s, y - s), (x + s, y - s), (x - s, y + s), (x + s, y + s)], fill=int(level), width=3)
+
+def draw_siegmeyer(d, x, g, nod, look, breath):
+    """Siegmeyer of Catarina sitting on the ground; nod 1 is head slumped, look turns it sideways."""
+    d.line([(x - 52, g + 2), (x - 40, g - 86)], fill=190, width=4)                        # zweihander
+    d.line([(x - 52, g - 70), (x - 30, g - 66)], fill=190, width=4)
+    d.line([(x - 40, g - 86), (x - 38, g - 100)], fill=130, width=3)
+    d.ellipse(box(x - 22, g - 8, 17, 8), fill=90, outline=190, width=2)                   # legs
+    d.ellipse(box(x + 22, g - 8, 17, 8), fill=90, outline=190, width=2)
+    d.ellipse(box(x, g - 34, 28, 24 + breath), fill=55, outline=205, width=2)            # onion armour
+    for k in (-14, 0, 14):
+        d.arc(box(x + k * 0.6, g - 34, abs(k) + 3, 22 + breath), 250 if k < 0 else -70,
+              110 if k < 0 else 70, fill=130, width=2)
+    d.line([(x - 26, g - 44), (x - 40, g - 70)], fill=150, width=6)                       # arm on sword
+    hx, hy = x + look * 5 + nod * 2, g - 66 + nod * 8 - breath
+    d.ellipse(box(hx, hy, 19, 15), fill=175, outline=225, width=2)                        # onion helmet
+    d.polygon([(hx - 9, hy - 10), (hx + 9, hy - 10), (hx + 1, hy - 28)], fill=175)
+    d.line([(hx - 15 + look * 3, hy + 2), (hx + 15 + look * 3, hy + 2)], fill=20, width=2)  # visor
+    d.line([(hx, hy - 14), (hx, hy + 13)], fill=110, width=2)
+
+def siegmeyer_napping():
+    n = 200
+    x, g = 168, 171
+    wake, asleep = 120, 176
+    z_spawns = [0, 25, 50, 75, 100, 180]
+    frames = []
+    for t in range(n):
+        img, d = new_canvas()
+        d.polygon([(0, H), (0, 170), (W, 170), (W, H)], fill=35)
+        awake = wake <= t < asleep
+        if awake:
+            nod = -0.6 * (1 - ease((t - wake) / 3)) if t < wake + 3 else 0.0
+            nod += ease((t - 152) / 24)
+            look = math.sin((t - wake - 6) * 0.25) * ease((t - wake - 6) / 4) * (1 - ease((t - 140) / 6))
+        else:
+            nod, look = 1.0, 0.0
+        breath = 1.5 * cycle(t, n, 4) if not awake else 0.5 * cycle(t, n, 12)
+        draw_siegmeyer(d, x, g, nod, look, breath)
+        if awake and t < wake + 12:                                                       # startled "!"
+            d.line([(x + 4, g - 120), (x + 4, g - 106)], fill=255, width=4)
+            d.ellipse(box(x + 4, g - 100, 2.5), fill=255)
+        for t0 in z_spawns:
+            age = (t - t0) % n
+            if age >= 60 or (wake <= t and (t0 < wake or t < t0) and t < asleep):
+                continue          # the Z's pop when he wakes
+            k = age / 60
+            fade = min(1.0, age / 6) * (1 - k ** 2)
+            draw_z(d, x + 24 + 42 * k + 5 * math.sin(age * 0.2), g - 100 - 80 * k, 17 + 10 * k, 230 * fade)
+        frames.append(img)
+    return frames
+
 SCENES = {
     "Wizard vs Dragon": (wizard_vs_dragon, 50),
     "Hyperspace": (hyperspace, 40),
@@ -665,6 +818,8 @@ SCENES = {
     "Plasma": (plasma, 50),
     "Ripples": (ripples, 50),
     "Equalizer": (equalizer, 45),
+    "Praise the Sun": (praise_the_sun, 50),
+    "Siegmeyer Napping": (siegmeyer_napping, 50),
 }
 
 if __name__ == "__main__":
