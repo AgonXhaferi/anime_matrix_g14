@@ -1,17 +1,20 @@
 # AniMe Matrix Selector
 
-A small GTK4 app for picking the animation on the AniMe Matrix lid display of an
-ASUS ROG Zephyrus G14 (tested on a GA402RK), on top of [asusctl](https://gitlab.com/asus-linux/asusctl).
+A small GTK4 app for picking the animation on the AniMe Matrix lid display of ASUS ROG
+laptops, on top of [asusctl](https://gitlab.com/asus-linux/asusctl) 6 or newer. Made and tested
+on a Zephyrus G14 GA402RK; it should also work on the other AniMe models asusd supports
+(GA401, GU604), without the lid preview there (see below).
 
 ## How it works
 
-- `anime-matrix-selector` (the app) shows GIFs from the stock asusd folders, your
-  `~/Pictures/ArmouryCrate_GIFs` folders and any GIF you add with *Browse* as a grid of
+- `anime-matrix-selector` (the app) shows GIFs from the stock asusd folder (found under
+  `/usr/share` or `/usr/local/share`), any folders you list in `folders.conf`, the Originals
+  and any GIF you add with *Browse* as a grid of
   animated thumbnails, grouped by folder. Start typing anywhere to search by name or
   category. The playing animation has a green outline, and the window opens on it.
 - Thumbnails load only when scrolled into view, keep at most 120 frames each, and pause
   while the window isn't focused, to keep memory and battery use down.
-- *Set as Main* points `~/.config/anime-matrix/active.gif` at your pick and restarts
+- *Set as Main* points `active.gif` in the config folder at your pick and restarts
   `anime-matrix.service`, a systemd user service that plays it with `asusctl` on a loop.
 - GIFs drawn for the native 74×36 LED grid play pixel-perfect (`asusctl anime pixel-gif`);
   any other size is scaled to fit (`asusctl anime gif`). The choice is saved in `mode.env`.
@@ -19,6 +22,10 @@ ASUS ROG Zephyrus G14 (tested on a GA402RK), on top of [asusctl](https://gitlab.
   outside the lid, using asusctl 6.3.8's own geometry and sampling (diagonal mapping for
   native GIFs, 16-sample averaging for scaled ones). *Plain GIF* shows the file itself.
   Native means 74×36 (ASUS's stock art) or 74×39 (the GA402's full diagonal grid).
+- The model is read from the board name (`/sys/class/dmi/id/board_name`), as asusd does. On
+  anything but a GA402 the *On the lid* view is hidden, since other lids lay out their LEDs
+  differently, and the Originals are labelled as made for the GA402. The app checks at start
+  that asusctl is installed and new enough (it needs `anime pixel-gif`) and says so if not.
 - *Originals* are animations made for this lid by `animations/make_animations.py`: Wizard vs
   Dragon, Hyperspace, Digital Rain, Inferno, Thunderstorm, Space Battle, Heartbeat, Plasma,
   Ripples, Equalizer, and two Dark Souls scenes: Praise the Sun and Siegmeyer Napping. Each scene is drawn in millimetres as the lid is seen from outside, and
@@ -39,15 +46,18 @@ Needs `asusctl`/`asusd`, Python 3 with GTK4 bindings (`python3-gobject`, `gtk4`)
 ./install.sh
 ```
 
-The app in `~/.local/bin` is a link to this folder, so edits here apply on the next launch.
+The installer fills in where asusctl lives and where your config folder is, and warns if
+asusctl is missing or too old. The app in `~/.local/bin` is a link to this folder, so edits here apply on the next launch.
 The service and launcher are copies: re-run `./install.sh` after changing them.
 
 ## Files outside this folder
 
-Your settings live in `~/.config/anime-matrix/` and are not part of the repo:
+Your settings live in `$XDG_CONFIG_HOME/anime-matrix/` (usually `~/.config/anime-matrix/`)
+and are not part of the repo:
 
 | File | Purpose |
 |---|---|
 | `active.gif` | Link to the animation currently playing |
 | `mode.env` | `pixel-gif` or `gif`, written by the app for the service |
 | `custom-gifs.txt` | GIFs added with *Browse*, one path per line |
+| `folders.conf` | Extra GIF folders to show, one per line, optionally named: `My GIFs = ~/Pictures/lid` |

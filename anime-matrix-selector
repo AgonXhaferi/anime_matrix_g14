@@ -4,6 +4,7 @@ import sys
 import glob
 import math
 import queue
+import shutil
 import subprocess
 import threading
 import time
@@ -17,14 +18,47 @@ gi.require_version('Pango', '1.0')
 from gi.repository import Gtk, GLib, Gio, Gdk, GObject, Gsk, Graphene, Pango
 from PIL import Image, ImageChops, ImageDraw, ImageOps, ImageSequence
 
-DEFAULT_TARGET = "/usr/share/asusd/anime/asus/rog/Sunset.gif"
-ACTIVE_SYMLINK = os.path.expanduser("~/.config/anime-matrix/active.gif")
-MODE_ENV = os.path.expanduser("~/.config/anime-matrix/mode.env")
-CUSTOM_LIST = os.path.expanduser("~/.config/anime-matrix/custom-gifs.txt")  # one path per line
+def _config_dir():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "anime-matrix")
+
+def _stock_dir():
+    """asusd's bundled GIFs: /usr/share/asusd/anime, or wherever the distro put it."""
+    data_dirs = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    for base in data_dirs.split(":") + ["/usr/local/share", "/usr/share"]:
+        path = os.path.join(base, "asusd", "anime")
+        if base and os.path.isdir(path):
+            return path
+    return "/usr/share/asusd/anime"
+
+def _lid_model():
+    """The AniMe panel type, read from the board name the same way asusd does."""
+    try:
+        with open("/sys/class/dmi/id/board_name") as f:
+            board = f.read().strip()
+    except OSError:
+        return None, ""
+    for model in ("GA401", "GA402", "GU604"):
+        if board.startswith(model):
+            return model, board
+    return None, board
+
+CONFIG_DIR = _config_dir()
+STOCK_DIR = _stock_dir()
+LID_MODEL, BOARD_NAME = _lid_model()
+# The lid preview and the Originals are drawn for the GA402's LED layout
+LID_SIMULATED = LID_MODEL == "GA402"
+
+DEFAULT_TARGET = os.path.join(STOCK_DIR, "asus/rog/Sunset.gif")
+ACTIVE_SYMLINK = os.path.join(CONFIG_DIR, "active.gif")
+MODE_ENV = os.path.join(CONFIG_DIR, "mode.env")
+CUSTOM_LIST = os.path.join(CONFIG_DIR, "custom-gifs.txt")  # one path per line
+FOLDERS_LIST = os.path.join(CONFIG_DIR, "folders.conf")    # extra GIF folders to show
 SERVICE = "anime-matrix.service"
 # Native diagonal GIF sizes: ASUS's stock art is 74x36, the GA402 lid itself reads 74x39
-NATIVE_SIZES = {(74, 36), (74, 39)}
+NATIVE_SIZES = {(74, 36), (74, 39)} if LID_SIMULATED else {(74, 36)}
 CUSTOM_CATEGORY = "Custom"
+ORIGINALS_CATEGORY = "Originals" if LID_SIMULATED else "Originals (made for the GA402)"
 THUMB_SIZE = (148, 72)    # 2x the matrix, so native GIFs scale by a whole number
 THUMB_MAX_FRAMES = 120    # longer GIFs skip frames in thumbnails to bound memory
 
@@ -39,19 +73,65 @@ POWER_SWITCHES = [
     ("OffWhenSuspended", "Off when suspended"),
 ]
 
-SEARCH_DIRECTORIES = [
-    ("/usr/share/asusd/anime/asus/rog", "ROG (Stock)"),
-    ("/usr/share/asusd/anime/asus/gaming", "Gaming (Stock)"),
-    ("/usr/share/asusd/anime/asus/music", "Music (Stock)"),
-    ("/usr/share/asusd/anime/asus/trend", "Trend (Stock)"),
-    ("/usr/share/asusd/anime/asus/festive", "Festive (Stock)"),
-    ("/usr/share/asusd/anime/custom", "Custom (Stock)"),
-    (os.path.expanduser("~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Normal"), "Armoury Crate Normal"),
-    (os.path.expanduser("~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Patterns"), "Armoury Crate Patterns"),
-    (os.path.expanduser("~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Alan_Walker"), "Alan Walker Collection"),
-    # Made for this lid by animations/make_animations.py; the app is run through a symlink
-    (os.path.join(os.path.dirname(os.path.realpath(__file__)), "animations"), "Originals"),
+STOCK_FOLDERS = [
+    ("asus/rog", "ROG (Stock)"),
+    ("asus/gaming", "Gaming (Stock)"),
+    ("asus/music", "Music (Stock)"),
+    ("asus/trend", "Trend (Stock)"),
+    ("asus/festive", "Festive (Stock)"),
+    ("custom", "Custom (Stock)"),
 ]
+
+FOLDERS_TEMPLATE = """\
+# Extra folders of GIFs for the AniMe Matrix Selector, one per line, shown in this order
+# between the stock animations and the Originals. Optionally name the section:
+#   Armoury Crate = ~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Normal
+#   ~/Pictures/lid-gifs          (shown as "lid-gifs")
+"""
+
+def load_user_folders():
+    """(folder, category) pairs from folders.conf, written as a commented template if missing."""
+    try:
+        with open(FOLDERS_LIST) as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            with open(FOLDERS_LIST, "w") as f:
+                f.write(FOLDERS_TEMPLATE)
+        except OSError:
+            pass
+        return []
+    folders = []
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, sep, path = line.partition(" = ")
+        if not sep:
+            name, path = "", line
+        path = os.path.expanduser(os.path.expandvars(path.strip()))
+        folders.append((path, name.strip() or os.path.basename(path.rstrip("/"))))
+    return folders
+
+def search_directories():
+    return ([(os.path.join(STOCK_DIR, sub), name) for sub, name in STOCK_FOLDERS]
+            + load_user_folders()
+            # Made for the GA402 by animations/make_animations.py; the app runs via a symlink
+            + [(os.path.join(os.path.dirname(os.path.realpath(__file__)), "animations"),
+                ORIGINALS_CATEGORY)])
+
+def check_asusctl():
+    """Blocking: None if asusctl can play GIFs the way the service does, else why not."""
+    if not shutil.which("asusctl"):
+        return "asusctl not found: install asusctl/asusd to drive the lid"
+    try:
+        res = subprocess.run(["asusctl", "anime", "--help"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"Couldn't run asusctl: {e}"
+    if "pixel-gif" not in res.stdout + res.stderr:
+        return "This asusctl is too old: the selector needs asusctl 6 or newer (anime pixel-gif)"
+    return None
 
 def get_current_active_path():
     if os.path.islink(ACTIVE_SYMLINK):
@@ -77,12 +157,12 @@ def remember_custom_gif(path):
         with open(CUSTOM_LIST, "w") as f:
             f.write("\n".join(paths + [path]) + "\n")
 
-def scan_animations():
+def scan_animations(directories):
     results = []
     seen_paths = set()
     active_path = get_current_active_path()
 
-    for folder, category in SEARCH_DIRECTORIES:
+    for folder, category in directories:
         if os.path.isdir(folder):
             for file in sorted(os.listdir(folder)):
                 if file.endswith(".gif") and not file.endswith("_thumbnail.gif"):
@@ -262,7 +342,7 @@ def apply_animation(path):
     if not ok:
         return f"Couldn't enable the lid display: {err}", None
 
-    # 1. Update symlink ~/.config/anime-matrix/active.gif
+    # 1. Point active.gif at the pick
     os.makedirs(os.path.dirname(ACTIVE_SYMLINK), exist_ok=True)
     if os.path.islink(ACTIVE_SYMLINK) or os.path.exists(ACTIVE_SYMLINK):
         os.remove(ACTIVE_SYMLINK)
@@ -559,7 +639,8 @@ flowboxchild.anim-tile.active-anim {
 class AniMeMatrixApp(Gtk.Application):
     def __init__(self):
         super().__init__(application_id="org.rog.animematrix.selector", flags=Gio.ApplicationFlags.FLAGS_NONE)
-        self.animations = scan_animations()
+        self.directories = search_directories()
+        self.animations = scan_animations(self.directories)
         self.gif_player = None
         self.selected_path = get_current_active_path()
         self.tiles = {}       # path -> AnimationTile
@@ -595,7 +676,10 @@ class AniMeMatrixApp(Gtk.Application):
         vbox_titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         h_title = Gtk.Label(label="AniMe Matrix Animation Selector", xalign=0)
         h_title.add_css_class("title-label")
-        h_subtitle = Gtk.Label(label="ROG Zephyrus G14 AniMe Matrix Manager", xalign=0)
+        model = BOARD_NAME or "unknown model"
+        if not LID_MODEL:
+            model += " (no AniMe Matrix asusd knows of)"
+        h_subtitle = Gtk.Label(label=f"AniMe Matrix Manager  •  {model}", xalign=0)
         h_subtitle.add_css_class("path-label")
         vbox_titles.append(h_title)
         vbox_titles.append(h_subtitle)
@@ -634,6 +718,8 @@ class AniMeMatrixApp(Gtk.Application):
         view_row.append(self.btn_view_lid)
         view_row.append(btn_view_plain)
         self.preview_card.append(view_row)
+        # Other lids have a different LED layout, so only the GIF itself can be shown
+        view_row.set_visible(LID_SIMULATED)
 
         self.picture = Gtk.Picture()
         self.picture.set_can_shrink(True)
@@ -643,6 +729,7 @@ class AniMeMatrixApp(Gtk.Application):
         # Drawing the lid costs some CPU, so like the thumbnails it pauses when unfocused
         self.gif_player = GifPlayer(self.picture, is_paused=lambda: not win.is_active())
         self.btn_view_lid.connect("toggled", lambda b: self.gif_player.set_lid_view(b.get_active()))
+        self.gif_player.set_lid_view(LID_SIMULATED)
 
         self.lbl_current_path = Gtk.Label(xalign=0.5)
         self.lbl_current_path.add_css_class("path-label")
@@ -688,6 +775,7 @@ class AniMeMatrixApp(Gtk.Application):
         self.update_preview()
         self.check_service_status()
         self.connect_asusd()
+        self.run_in_background(check_asusctl, self.on_asusctl_checked)
 
         win.connect("destroy", self.on_window_destroy)
         win.present()
@@ -717,7 +805,7 @@ class AniMeMatrixApp(Gtk.Application):
         self.lbl_no_results.add_css_class("dim-label")
         self.sections_box.append(self.lbl_no_results)
 
-        for category in [c for _, c in SEARCH_DIRECTORIES] + [CUSTOM_CATEGORY]:
+        for category in dict.fromkeys([c for _, c in self.directories] + [CUSTOM_CATEGORY]):
             self.add_section(category)
         for category, path in self.animations:
             self.add_tile(category, path)
@@ -921,9 +1009,16 @@ class AniMeMatrixApp(Gtk.Application):
             GLib.idle_add(lambda: done(result) and False)
         threading.Thread(target=worker, daemon=True).start()
 
+    def on_asusctl_checked(self, problem):
+        self.asusctl_problem = problem
+        if problem:
+            self.set_status(problem, "status-error")
+            self.set_busy(False)
+
     def set_busy(self, busy):
-        self.btn_apply.set_sensitive(not busy)
-        self.btn_off.set_sensitive(not busy)
+        usable = not busy and not getattr(self, "asusctl_problem", None)
+        self.btn_apply.set_sensitive(usable)
+        self.btn_off.set_sensitive(usable)
 
     def on_open_folder_clicked(self, button):
         path = self.get_selected_path()
@@ -1024,7 +1119,7 @@ class AniMeMatrixApp(Gtk.Application):
         brightness = proxy.get_cached_property("Brightness") if proxy else None
         if brightness is None:
             self.settings_card.set_sensitive(False)
-            self.lbl_settings_note.set_text("asusd is not running")
+            self.lbl_settings_note.set_text("asusd is not running (or is older than 6.0)")
             return
         self.syncing_settings = True
         self.dd_brightness.set_selected(min(brightness.unpack(), len(BRIGHTNESS_LEVELS) - 1))

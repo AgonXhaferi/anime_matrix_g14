@@ -2,17 +2,18 @@
 Description=ROG Zephyrus AniMe Matrix Background Runner
 After=default.target
 # Skip cleanly instead of crash-looping if the active GIF was moved or deleted
-ConditionPathExists=%h/.config/anime-matrix/active.gif
+ConditionPathExists=@CONFIG_DIR@/active.gif
 # Never give up for good (e.g. asusd restarting); the backoff below keeps retries cheap
 StartLimitIntervalSec=0
 
 [Service]
+# @...@ placeholders are filled in by install.sh
 Type=simple
 # pixel-gif for native 74x36 matrix GIFs, gif (scaled) for everything else.
 # The selector app writes ANIME_CMD to mode.env when you pick an animation.
 Environment=ANIME_CMD=pixel-gif
-EnvironmentFile=-%h/.config/anime-matrix/mode.env
-ExecStart=/usr/bin/asusctl anime ${ANIME_CMD} --path %h/.config/anime-matrix/active.gif --loops 0
+EnvironmentFile=-@CONFIG_DIR@/mode.env
+ExecStart=@ASUSCTL@ anime ${ANIME_CMD} --path "@CONFIG_DIR@/active.gif" --loops 0
 Restart=always
 # Retry after 2s at first, backing off to once every 5 minutes if it keeps failing
 RestartSec=2
