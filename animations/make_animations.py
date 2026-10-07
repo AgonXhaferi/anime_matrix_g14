@@ -919,7 +919,7 @@ def siegmeyer_napping():
     fire_x, ledge = 134, 110              # the bonfire on a rock ledge to his right
     wake, asleep = 120, 178
     z_spawns = [0, 25, 50, 75, 100]       # one per snore; after waking there's a pause before the next
-    flames = fire_layers(n, 16, 11, 34, seed=12, top=40)     # taller and hotter than Solaire's
+    flames = fire_layers(n, 16, 11, 28, seed=12, top=40)     # hotter than Solaire's; low enough for the Z's
     embers = [(int(k * n / 12 + rng.uniform(0, 8)), rng.uniform(-6, 6), rng.uniform(-0.4, 0.4))
               for k in range(12)]
     frames = []
@@ -970,8 +970,11 @@ def siegmeyer_napping():
             if age >= 60 or (wake <= t and (t0 < wake or t < t0) and t < asleep):
                 continue          # the Z's pop when he wakes
             k = age / 60
-            fade = min(1.0, age / 5) * (1 - k ** 2)
-            draw_z(d, x + 4 + 26 * k + 5 * math.sin(age * 0.2), g - 96 - 46 * k, 8 + 16 * k, 235 * fade)
+            fade = min(1.0, age / 5) * (1 - k ** 3)
+            # small z by his head growing into a big Z, arcing over the fire into the open sky
+            zx = (1 - k) ** 2 * (x + 12) + 2 * k * (1 - k) * (x + 20) + k ** 2 * (x + 155)
+            zy = (1 - k) ** 2 * (g - 96) + 2 * k * (1 - k) * (g - 160) + k ** 2 * (g - 120)
+            draw_z(d, zx + 4 * math.sin(age * 0.2), zy, 8 + 22 * k, 235 * fade)
         frames.append(img.transpose(Image.Transpose.ROTATE_180))
     return frames
 
