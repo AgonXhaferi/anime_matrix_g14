@@ -3,6 +3,8 @@ import os
 import sys
 import glob
 import subprocess
+import threading
+import time
 import gi
 
 gi.require_version('Gtk', '4.0')
@@ -12,6 +14,10 @@ from PIL import Image, ImageSequence
 
 DEFAULT_TARGET = "/usr/share/asusd/anime/asus/rog/Sunset.gif"
 ACTIVE_SYMLINK = os.path.expanduser("~/.config/anime-matrix/active.gif")
+MODE_ENV = os.path.expanduser("~/.config/anime-matrix/mode.env")
+CUSTOM_LIST = os.path.expanduser("~/.config/anime-matrix/custom-gifs.txt")  # one path per line
+SERVICE = "anime-matrix.service"
+MATRIX_SIZE = (74, 36)  # native diagonal LED grid; anything else needs scaling
 
 SEARCH_DIRECTORIES = [
     ("/usr/share/asusd/anime/asus/rog", "ROG (Stock)"),
@@ -35,6 +41,20 @@ def get_current_active_path():
             pass
     return DEFAULT_TARGET
 
+def load_custom_gifs():
+    try:
+        with open(CUSTOM_LIST) as f:
+            return [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        return []
+
+def remember_custom_gif(path):
+    paths = load_custom_gifs()
+    if path not in paths:
+        os.makedirs(os.path.dirname(CUSTOM_LIST), exist_ok=True)
+        with open(CUSTOM_LIST, "w") as f:
+            f.write("\n".join(paths + [path]) + "\n")
+
 def scan_animations():
     results = []
     seen_paths = set()
@@ -50,15 +70,85 @@ def scan_animations():
                         display_name = f"[{category}]  {file}"
                         results.append((display_name, path))
 
-    # Ensure active_path or DEFAULT_TARGET is prioritized at index 0
-    target_idx = 0
-    for idx, (name, path) in enumerate(results):
-        if path == active_path or path == DEFAULT_TARGET or os.path.basename(path) == "Sunset.gif":
-            item = results.pop(idx)
-            results.insert(0, item)
-            break
+    # GIFs added via Browse live outside the scanned folders
+    for path in load_custom_gifs() + [active_path]:
+        if path not in seen_paths and os.path.exists(path):
+            seen_paths.add(path)
+            results.append((f"[Custom]  {os.path.basename(path)}", path))
 
+    # Preselect the animation that is currently playing
+    for idx, (name, path) in enumerate(results):
+        if path == active_path:
+            return results, idx
     return results, 0
+
+def anime_command_for(path):
+    """pixel-gif only renders correctly for GIFs drawn for the 74x36 diagonal grid."""
+    try:
+        with Image.open(path) as im:
+            return "pixel-gif" if im.size == MATRIX_SIZE else "gif"
+    except Exception:
+        return "gif"
+
+def run_cmd(args):
+    """Run a command, returning (ok, error message)."""
+    try:
+        res = subprocess.run(args, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    # asusctl reports some failures with exit code 0, so also look for its "Error:" line
+    err = find_error(res.stdout + res.stderr)
+    if res.returncode != 0 or err:
+        return False, err or f"exit code {res.returncode}"
+    return True, ""
+
+def find_error(output):
+    for line in output.splitlines():
+        if line.startswith("Error"):
+            return line.split(":", 1)[-1].strip()
+    return ""
+
+def service_props():
+    res = subprocess.run(
+        ["systemctl", "--user", "show", SERVICE, "-p", "ActiveState,SubState,NRestarts,ConditionResult"],
+        capture_output=True, text=True
+    )
+    return dict(line.split("=", 1) for line in res.stdout.splitlines() if "=" in line)
+
+def apply_animation(path):
+    """Blocking: make `path` the running animation. Returns (error, (restarts, started_at))."""
+    ok, err = run_cmd(["asusctl", "anime", "--enable-display", "true"])
+    if not ok:
+        return f"Couldn't enable the lid display: {err}", None
+
+    # 1. Update symlink ~/.config/anime-matrix/active.gif
+    os.makedirs(os.path.dirname(ACTIVE_SYMLINK), exist_ok=True)
+    if os.path.islink(ACTIVE_SYMLINK) or os.path.exists(ACTIVE_SYMLINK):
+        os.remove(ACTIVE_SYMLINK)
+    os.symlink(path, ACTIVE_SYMLINK)
+
+    # 2. Tell the service whether to play it pixel-perfect or scaled
+    with open(MODE_ENV, "w") as f:
+        f.write(f"ANIME_CMD={anime_command_for(path)}\n")
+
+    # 3. Re-enable (Turn Off disables it) and restart the background service
+    started_at = time.time()
+    ok, err = run_cmd(["systemctl", "--user", "enable", SERVICE])
+    if ok:
+        ok, err = run_cmd(["systemctl", "--user", "restart", SERVICE])
+    if not ok:
+        return f"Couldn't restart the service: {err}", None
+    return None, (service_props().get("NRestarts", "0"), started_at)
+
+def turn_off_matrix():
+    """Blocking: stop the animation and keep it off across reboots. Returns an error or None."""
+    for args in (["systemctl", "--user", "disable", "--now", SERVICE],
+                 ["asusctl", "anime", "--clear"],
+                 ["asusctl", "anime", "--enable-display", "false"]):
+        ok, err = run_cmd(args)
+        if not ok:
+            return err
+    return None
 
 class GifPlayer:
     """Renders and loops animated GIFs frame-by-frame inside Gtk.Picture."""
@@ -67,55 +157,50 @@ class GifPlayer:
         self.frames = []
         self.frame_idx = 0
         self.timer_id = None
+        self.load_token = 0  # bumped per load so a slow decode can't overwrite a newer pick
 
     def stop(self):
+        self.load_token += 1
         if self.timer_id:
             GLib.source_remove(self.timer_id)
             self.timer_id = None
 
-    def load(self, path):
+    def load(self, path, on_loaded):
+        """Decode `path` in a background thread, then start playback and call on_loaded(info)."""
         self.stop()
-        if not path or not os.path.exists(path):
-            return None
+        token = self.load_token
+        threading.Thread(target=self._decode, args=(path, token, on_loaded), daemon=True).start()
 
+    def _decode(self, path, token, on_loaded):
+        frames, info_str = [], None
         try:
-            im = Image.open(path)
-            self.frames = []
-            info_str = f"{im.size[0]} × {im.size[1]} px"
-
-            # Check if animated
-            is_anim = getattr(im, "is_animated", False) and getattr(im, "n_frames", 1) > 1
-            if is_anim:
-                info_str += f" • {im.n_frames} frames"
+            with Image.open(path) as im:
+                info_str = f"{im.size[0]} × {im.size[1]} px"
+                if getattr(im, "is_animated", False) and getattr(im, "n_frames", 1) > 1:
+                    info_str += f" • {im.n_frames} frames"
                 for frame in ImageSequence.Iterator(im):
+                    if token != self.load_token:
+                        return  # a different GIF was picked meanwhile
                     rgba = frame.convert("RGBA")
-                    raw_bytes = rgba.tobytes()
-                    glib_bytes = GLib.Bytes.new(raw_bytes)
-                    tex = Gdk.MemoryTexture.new(
-                        rgba.width, rgba.height,
-                        Gdk.MemoryFormat.R8G8B8A8,
-                        glib_bytes, rgba.width * 4
-                    )
                     dur = frame.info.get("duration", 40)
-                    self.frames.append((tex, max(dur, 20)))
-            else:
-                rgba = im.convert("RGBA")
-                raw_bytes = rgba.tobytes()
-                glib_bytes = GLib.Bytes.new(raw_bytes)
-                tex = Gdk.MemoryTexture.new(
-                    rgba.width, rgba.height,
-                    Gdk.MemoryFormat.R8G8B8A8,
-                    glib_bytes, rgba.width * 4
-                )
-                self.frames.append((tex, 1000))
-
-            self.frame_idx = 0
-            if self.frames:
-                self.next_frame()
-            return info_str
+                    frames.append((rgba.width, rgba.height, rgba.tobytes(), max(dur, 20)))
         except Exception as e:
             print(f"Error loading GIF preview for {path}: {e}")
-            return None
+            frames, info_str = [], None
+        GLib.idle_add(self._show, token, frames, info_str, on_loaded)
+
+    def _show(self, token, frames, info_str, on_loaded):
+        if token != self.load_token:
+            return False
+        self.frames = [
+            (Gdk.MemoryTexture.new(w, h, Gdk.MemoryFormat.R8G8B8A8, GLib.Bytes.new(data), w * 4), dur)
+            for w, h, data, dur in frames
+        ]
+        self.frame_idx = 0
+        if self.frames:
+            self.next_frame()
+        on_loaded(info_str)
+        return False
 
     def next_frame(self):
         if not self.frames:
@@ -297,12 +382,10 @@ class AniMeMatrixApp(Gtk.Application):
     def update_preview(self):
         path = self.get_selected_path()
         if path and os.path.exists(path):
-            info = self.gif_player.load(path)
             fname = os.path.basename(path)
-            if info:
-                self.lbl_current_path.set_text(f"{fname}  •  {info}")
-            else:
-                self.lbl_current_path.set_text(fname)
+            self.lbl_current_path.set_text(f"{fname}  •  loading…")
+            self.gif_player.load(path, lambda info: self.lbl_current_path.set_text(
+                f"{fname}  •  {info}" if info else fname))
         else:
             self.gif_player.stop()
             self.lbl_current_path.set_text("File not found")
@@ -312,7 +395,9 @@ class AniMeMatrixApp(Gtk.Application):
             ["systemctl", "--user", "is-active", "anime-matrix.service"],
             capture_output=True, text=True
         )
-        if res.stdout.strip() == "active":
+        if os.path.islink(ACTIVE_SYMLINK) and not os.path.exists(ACTIVE_SYMLINK):
+            self.lbl_badge.set_text("⚠ Active GIF missing, pick another")
+        elif res.stdout.strip() == "active":
             active_file = os.path.basename(get_current_active_path())
             self.lbl_badge.set_visible(True)
             self.lbl_badge.set_text(f"● Active: {active_file}")
@@ -330,37 +415,64 @@ class AniMeMatrixApp(Gtk.Application):
             return
 
         filename = os.path.basename(path)
+        self.set_busy(True)
+        self.set_status(f"Starting '{filename}'…", "status-info")
+        self.run_in_background(lambda: apply_animation(path),
+                               lambda result: self.on_apply_done(filename, result))
 
-        # 0. Ensure display is enabled in hardware
-        subprocess.run(["asusctl", "anime", "--enable-display", "true"], check=False)
+    def on_apply_done(self, filename, result):
+        err, check = result
+        if err:
+            self.set_status(err, "status-error")
+            self.set_busy(False)
+            self.check_service_status()
+            return
+        # asusctl can fail a moment after starting, so confirm it is still running
+        GLib.timeout_add(2500, self.verify_playing, filename, *check)
 
-        # 1. Update symlink ~/.config/anime-matrix/active.gif
-        os.makedirs(os.path.dirname(ACTIVE_SYMLINK), exist_ok=True)
-        if os.path.islink(ACTIVE_SYMLINK) or os.path.exists(ACTIVE_SYMLINK):
-            os.remove(ACTIVE_SYMLINK)
-        os.symlink(path, ACTIVE_SYMLINK)
-
-        # 2. Restart background systemd user service
-        subprocess.run(["systemctl", "--user", "restart", "anime-matrix.service"], check=False)
-
-        self.set_status(f"✓ '{filename}' is now active & playing on your lid!", "status-success")
+    def verify_playing(self, filename, restarts_before, started_at):
+        props = service_props()
+        if props.get("SubState") == "running" and props.get("NRestarts", "0") == restarts_before:
+            self.set_status(f"✓ '{filename}' is now active & playing on your lid!", "status-success")
+        elif props.get("ConditionResult") == "no":
+            self.set_status(f"'{filename}' failed to play: the GIF file is missing", "status-error")
+        else:
+            # Only look at this attempt's log lines, not errors from earlier runs
+            res = subprocess.run(
+                ["journalctl", "--user", "-u", SERVICE, "--since", f"@{int(started_at)}",
+                 "-o", "cat", "--no-pager"],
+                capture_output=True, text=True
+            )
+            errors = [find_error(line) for line in res.stdout.splitlines() if find_error(line)]
+            detail = errors[-1] if errors else props.get("ActiveState", "not running")
+            self.set_status(f"'{filename}' failed to play: {detail}", "status-error")
+        self.set_busy(False)
         self.check_service_status()
+        return False
 
     def on_turn_off_clicked(self, button):
-        subprocess.run(["systemctl", "--user", "stop", "anime-matrix.service"], check=False)
-        # Flush all LEDs to black (0) using black.png, then disable display
-        black_png = os.path.expanduser("~/.config/anime-matrix/black.png")
-        if not os.path.exists(black_png):
-            try:
-                from PIL import Image
-                im = Image.new('L', (74, 36), color=0)
-                im.save(black_png)
-            except Exception:
-                pass
-        subprocess.run(["asusctl", "anime", "pixel-image", "--path", black_png], check=False)
-        subprocess.run(["asusctl", "anime", "--enable-display", "false"], check=False)
-        self.set_status("Matrix display turned off", "status-info")
+        self.set_busy(True)
+        self.set_status("Turning off…", "status-info")
+        self.run_in_background(turn_off_matrix, self.on_turn_off_done)
+
+    def on_turn_off_done(self, err):
+        if err:
+            self.set_status(f"Couldn't turn off the lid display: {err}", "status-error")
+        else:
+            self.set_status("Matrix display turned off (stays off until you pick an animation)", "status-info")
+        self.set_busy(False)
         self.check_service_status()
+
+    def run_in_background(self, work, done):
+        """Run blocking `work` off the UI thread so the window stays responsive, then done(result)."""
+        def worker():
+            result = work()
+            GLib.idle_add(lambda: done(result) and False)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def set_busy(self, busy):
+        self.btn_apply.set_sensitive(not busy)
+        self.btn_off.set_sensitive(not busy)
 
     def on_open_folder_clicked(self, button):
         path = self.get_selected_path()
@@ -384,6 +496,11 @@ class AniMeMatrixApp(Gtk.Application):
                 if gfile:
                     path = gfile.get_path()
                     if path and path.endswith(".gif"):
+                        paths = [item[1] for item in self.animations]
+                        if path in paths:
+                            self.dropdown.set_selected(paths.index(path))
+                            return
+                        remember_custom_gif(path)
                         name = f"[Custom]  {os.path.basename(path)}"
                         self.animations.append((name, path))
                         labels = [item[0] for item in self.animations]

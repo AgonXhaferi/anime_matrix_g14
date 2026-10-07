@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=AniMe Matrix Selector
 Comment=Select and preview AniMe Matrix running animations
-Exec=/home/agonxhaferi/.local/bin/anime-matrix-selector
+Exec=@BIN_DIR@/anime-matrix-selector
 Icon=preferences-desktop-display
 Terminal=false
 Type=Application
