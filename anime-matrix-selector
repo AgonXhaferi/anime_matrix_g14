@@ -567,6 +567,11 @@ class AniMeMatrixApp(Gtk.Application):
         self.syncing_selection = False
 
     def do_activate(self):
+        # Launching the app again while it runs activates this instance; bring the window
+        # forward instead of building a second one over the same tiles
+        if getattr(self, "window", None) is not None:
+            self.window.present()
+            return
         win = Gtk.ApplicationWindow(application=self, title="AniMe Matrix Selector")
         win.set_default_size(1100, 760)
         self.window = win
