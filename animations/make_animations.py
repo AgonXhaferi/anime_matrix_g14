@@ -149,45 +149,84 @@ def draw_wizard(d, t, n, raise_amount, orb_radius, orb_level):
         d.ellipse(box(*top, orb_radius), fill=int(orb_level))
     return top
 
-def draw_wing(d, sx, sy, flap, level):
-    """Bat wing reaching back (right); flap 1 is fully up, -1 fully down."""
-    up = flap if flap > 0 else flap * 0.6
-    elbow = (sx + 16, sy - 6 - 24 * up)
-    tip = (sx + 34, sy - 4 - 48 * up)
-    finger = (sx + 50, sy - 2 - 26 * up)
-    trail = (sx + 34, sy + 3)
-    d.polygon([(sx, sy), elbow, tip, finger, trail], fill=int(level * 0.3))
-    d.line([(sx, sy), elbow, tip], fill=int(level), width=3)
-    d.line([elbow, finger], fill=int(level * 0.8), width=2)
-    d.line([elbow, (sx + 30, sy - 1)], fill=int(level * 0.8), width=2)
+def bezier(p0, p1, p2, steps):
+    return [((1 - u) ** 2 * p0[0] + 2 * (1 - u) * u * p1[0] + u * u * p2[0],
+             (1 - u) ** 2 * p0[1] + 2 * (1 - u) * u * p1[1] + u * u * p2[1])
+            for u in (k / steps for k in range(steps + 1))]
 
-def draw_dragon(d, x, y, flap, jaw, tail_phase):
-    """Dragon facing left with its body centred on (x, y). Returns the mouth position."""
-    hx, hy = x - 46, y - 12
-    tail = [(x + 22 + k * 8, y + 2 + k * 2 + 5 * math.sin(k * 0.9 + tail_phase)) for k in range(6)]
-    for k in range(5):
-        d.line([tail[k], tail[k + 1]], fill=170, width=max(2, 5 - k))
-    tx, ty = tail[-1]
-    d.polygon([(tx, ty - 5), (tx + 9, ty), (tx, ty + 5)], fill=200)
-    draw_wing(d, x + 8, y - 8, math.sin(math.asin(max(-1, min(1, flap))) + 0.5), 90)   # far wing
-    d.line([(x - 10, y + 6), (x - 15, y + 19)], fill=170, width=4)                        # legs
-    d.line([(x + 12, y + 6), (x + 10, y + 19)], fill=170, width=4)
-    d.ellipse(box(x, y, 24, 11), fill=60, outline=220, width=3)                          # body
-    neck = [(x - 18, y - 4), (x - 30, y - 11), (x - 38, y - 14), (hx + 4, hy)]
-    d.line(neck, fill=220, width=10)
-    d.line(neck[:-1], fill=60, width=4)
-    for k in range(4):                                                                    # spines
-        sx = x - 12 + k * 10
-        d.polygon([(sx - 3, y - 10), (sx + 3, y - 10), (sx, y - 17)], fill=220)
-    d.polygon([(hx + 6, hy + 2), (hx - 15, hy + 3 + 9 * jaw), (hx - 13, hy + 7 + 9 * jaw),
-               (hx + 6, hy + 7)], fill=170)                                                # lower jaw
-    d.polygon([(hx + 9, hy - 6), (hx - 4, hy - 7), (hx - 18, hy - 1), (hx - 18, hy + 2),
-               (hx + 9, hy + 3)], fill=195)                                                # head
-    d.line([(hx + 5, hy - 6), (hx + 15, hy - 16)], fill=220, width=3)                     # horns
-    d.line([(hx + 1, hy - 6), (hx + 7, hy - 17)], fill=220, width=3)
-    d.ellipse(box(hx - 3, hy - 3, 2), fill=255)                                          # eye
-    draw_wing(d, x - 4, y - 8, flap, 230)                                                 # near wing
-    return hx - 17, hy + 3 + 5 * jaw
+def draw_wing(d, sx, sy, flap, level, scale=1.0):
+    """Bony bat wing reaching back (right); flap 1 is fully up, -1 fully down."""
+    up = (flap if flap > 0 else flap * 0.7) * scale
+
+    def at(dx, dy):
+        return sx + dx * scale, sy - dy * up - 2
+
+    elbow, wrist = at(14, 18), at(24, 42)
+    tips = [at(14, 62), at(40, 58), at(60, 38), at(44, 4)]
+    membrane = [(sx, sy), elbow, wrist, tips[0]]
+    for a, b in zip(tips, tips[1:]):
+        # trailing edge sags towards the wrist between fingers
+        mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        membrane += [(lerp(mid[0], wrist[0], 0.3), lerp(mid[1], wrist[1], 0.3)), b]
+    d.polygon(membrane + [(sx + 8, sy + 2)], fill=int(level * 0.22))
+    d.line([(sx, sy), elbow, wrist], fill=int(level), width=3)
+    for tip in tips:
+        d.line([wrist, tip], fill=int(level * 0.75), width=2)
+    claw = at(16, 50)
+    d.line([wrist, claw, (claw[0] - 3, claw[1] + 2)], fill=int(level), width=2)
+
+def draw_dragon(d, x, y, flap, jaw, tail_phase, rear=0.0):
+    """Dragon facing left with its body centred on (x, y); rear > 0 pulls the head back and up,
+    rear < 0 lunges it forward. Returns the mouth position."""
+    hx, hy = x - 52 + 10 * rear, y - 20 - 8 * rear
+
+    # Long tail curling down, with a wave running along it, ending in a barb
+    tail = [(x + 18, y + 3)]
+    for k in range(8):
+        ang = 0.35 + k * 0.19 + 0.3 * math.sin(tail_phase - k * 0.7)
+        tail.append((tail[-1][0] + 8 * math.cos(ang), tail[-1][1] + 8 * math.sin(ang)))
+    for k in range(8):
+        d.line([tail[k], tail[k + 1]], fill=170, width=max(1, 5 - k // 2))
+    (px, py), (tx, ty) = tail[-2], tail[-1]
+    ang = math.atan2(ty - py, tx - px)
+    ux, uy = math.cos(ang), math.sin(ang)
+    d.polygon([(tx + ux * 8, ty + uy * 8), (tx - uy * 4 - ux * 2, ty + ux * 4 - uy * 2), (tx, ty),
+               (tx + uy * 4 - ux * 2, ty - ux * 4 - uy * 2)], fill=230)
+
+    draw_wing(d, x + 6, y - 8, math.sin(math.asin(max(-1, min(1, flap))) + 0.5), 85, 0.85)   # far wing
+
+    # Legs tucked under, claws forward
+    d.line([(x + 12, y + 5), (x + 5, y + 14), (x + 12, y + 20), (x + 6, y + 22)], fill=170, width=3)
+    d.line([(x - 14, y + 7), (x - 19, y + 14), (x - 13, y + 18), (x - 18, y + 20)], fill=170, width=3)
+
+    torso = [(x - 22, y - 6), (x - 16, y + 9), (x + 4, y + 10), (x + 22, y + 5), (x + 20, y - 5), (x - 4, y - 10)]
+    d.polygon(torso, fill=50, outline=210, width=2)
+
+    # S-shaped neck, thick at the chest and thin at the head
+    neck = bezier((x - 18, y - 5), (x - 30, y - 28 - 10 * rear), (hx + 7, hy + 1), 6)
+    for k, (a, b) in enumerate(zip(neck, neck[1:])):
+        d.line([a, b], fill=210, width=10 - k)
+    for k, (a, b) in enumerate(zip(neck, neck[1:])):
+        d.line([a, b], fill=50, width=max(1, 5 - k))
+    for (ax, ay), (bx, by) in zip(neck[1:], neck[2:]):                                   # neck spines
+        d.polygon([(ax, ay - 4), (bx, by - 4), ((ax + bx) / 2 + 3, (ay + by) / 2 - 10)], fill=200)
+    for k in range(4):                                                                    # back spines
+        sx = x - 14 + k * 9
+        d.polygon([(sx - 3, y - 9), (sx + 4, y - 8), (sx + 4, y - 16)], fill=200)
+
+    # Wedge-shaped head: long snout, heavy brow, horns swept back
+    drop = 12 * jaw
+    d.polygon([(hx + 6, hy + 4), (hx - 18, hy + 5 + drop), (hx - 15, hy + 8 + drop), (hx + 4, hy + 9)],
+              fill=160)                                                                    # lower jaw
+    d.polygon([(hx + 9, hy - 3), (hx - 2, hy - 7), (hx - 10, hy - 4), (hx - 23, hy + 1),
+               (hx - 21, hy + 4), (hx + 7, hy + 5)], fill=200)                             # skull & snout
+    d.line([(hx + 7, hy - 4), (hx + 17, hy - 10), (hx + 27, hy - 9)], fill=230, width=3)  # horns
+    d.line([(hx + 3, hy - 6), (hx + 10, hy - 15), (hx + 19, hy - 18)], fill=200, width=2)
+    d.ellipse(box(hx - 4, hy - 3, 2.5, 1.2), fill=0)                                     # slit eye
+    d.ellipse(box(hx - 4, hy - 3, 1.6, 1), fill=255)
+
+    draw_wing(d, x - 6, y - 8, flap, 235)                                                # near wing
+    return hx - 20, hy + 5 + drop * 0.6
 
 def wizard_vs_dragon():
     n = 170
@@ -201,16 +240,20 @@ def wizard_vs_dragon():
         # Dragon flies in, hovers, gets struck, and flees; it is off screen at the loop point
         if t < 28:
             k = ease(t / 28)
-            dx, dy = lerp(340, 222, k), lerp(10, 58, k)
+            dx, dy = lerp(340, 212, k), lerp(14, 66, k)
         elif t < 106:
-            dx, dy = 222, 58 + 3 * math.sin(t * 0.3)
+            dx, dy = 212, 66 + 3 * math.sin(t * 0.3)
         elif t < 118:
-            dx, dy = 222 + 14 * ease((t - 106) / 6), 58 - 4 * ease((t - 106) / 6)
+            dx, dy = 212 + 14 * ease((t - 106) / 6), 66 - 4 * ease((t - 106) / 6)
         else:
             k = (t - 118) / 22
-            dx, dy = 236 + 130 * k * k, 54 - 90 * k * k
-        flap_phase += TAU / (6 if t >= 112 else 10)
+            dx, dy = 226 + 140 * k * k, 62 - 100 * k * k
+        # Powerful downstroke, slower recovery
+        speed = TAU / (7 if t >= 112 else 12)
+        flap_phase += speed * (1.5 if math.cos(flap_phase) < 0 else 0.75)
         flap = math.sin(flap_phase)
+        rear = (ease((t - 28) / 8) * (1 - ease((t - 42) / 3))
+                - 0.6 * ease((t - 42) / 3) * (1 - ease((t - 80) / 8)))
         jaw = ease((t - 34) / 8) * (1 - ease((t - 80) / 4))
         shield = ease((t - 38) / 6) * (1 - ease((t - 84) / 5))
         raise_amount = ease((t - 84) / 6) * (1 - ease((t - 150) / 8))
@@ -286,7 +329,7 @@ def wizard_vs_dragon():
         smoke = [s for s in smoke if s[2] < 16]
         draw_particles(d, [(x, y, 3 + age * 0.5, 80 * (1 - age / 16)) for x, y, age in smoke])
         if not (106 <= t < 118 and t % 2):
-            mouth = draw_dragon(d, dx, dy, flap, jaw, t * 0.35)
+            mouth = draw_dragon(d, dx, dy, flap, jaw, t * 0.35, rear)
             if 34 <= t < 80:
                 glow = ease((t - 34) / 10)
                 d.ellipse(box(*mouth, 3 + 3 * glow), fill=int(120 + 135 * glow))
