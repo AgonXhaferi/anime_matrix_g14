@@ -706,7 +706,7 @@ def draw_solaire(d, x, g, praise, breath, shake=0.0, sit=0.0):
     spread = 6 * praise
     base = g + 18 * sit                     # sitting lowers everything above the hips
     top = base - 86 - lean - breath
-    sx0, sy0 = x - 13, top - 8                                                            # shield on his back
+    sx0, sy0 = x - 12, top + 18                                                           # shield on his back
     d.ellipse(box(sx0, sy0, 19), fill=0)
     d.ellipse(box(sx0, sy0, 16), fill=110, outline=230, width=2)
     for k in range(4):
@@ -744,20 +744,29 @@ def draw_solaire(d, x, g, praise, breath, shake=0.0, sit=0.0):
         a = TAU * k / 8
         d.line([(ex, ey), (ex + 9 * math.cos(a), ey + 9 * math.sin(a))], fill=200, width=2)
     d.ellipse(box(ex, ey, 5), fill=255)
-    for side in (-1, 1):                                                                  # arms
-        sx, sy = x + side * 22, top + 4
+    shoulders = [(x + side * (22 + 3 * praise), top + 4 - 5 * praise) for side in (-1, 1)]
+    for side, (sx, sy) in zip((-1, 1), shoulders):                                        # arms
         rest_hand = (x + side * lerp(28, 30, sit), lerp(g - 46, g - 28, sit))             # on his knees
-        up_hand = (x + side * 44, g - 138 + shake)
+        up_hand = (x + side * 38, g - 134 + shake)
         hand = (lerp(rest_hand[0], up_hand[0], praise), lerp(rest_hand[1], up_hand[1], praise))
         elbow = (lerp(sx, hand[0], 0.5) + side * 7 * (1 - praise), lerp(sy, hand[1], 0.5))
-        limb(d, [(sx, sy), elbow, hand], 8, 145)
-        d.ellipse(box(*elbow, 6), fill=220, outline=0, width=2)                           # couter
-        d.ellipse(box(*hand, 7), fill=0)
-        d.rectangle(box(*hand, 5), fill=235)                                              # gauntlet
+        limb(d, [(sx, sy), elbow], 10, 125)                                               # upper arm
+        limb(d, [elbow, hand], 8, 175)                                                    # vambrace
+        d.ellipse(box(*elbow, 6), fill=225, outline=0, width=2)                           # couter
+        if praise > 0.6:                                  # fingers spread wide toward the sun
+            reach = math.atan2(hand[1] - elbow[1], hand[0] - elbow[0])
+            for spread in (-0.7, -0.25, 0.2, 0.65):
+                tip = (hand[0] + 10 * math.cos(reach + spread), hand[1] + 10 * math.sin(reach + spread))
+                limb(d, [hand, tip], 3, 235)
+            d.ellipse(box(*hand, 6), fill=0)
+            d.ellipse(box(*hand, 4), fill=245)                                            # palm
+        else:
+            d.ellipse(box(*hand, 7), fill=0)
+            d.rectangle(box(*hand, 5), fill=235)                                          # gauntlet
     for side in (-1, 1):                                                                  # layered pauldrons
-        sx, sy = x + side * 21, top + 2
-        for k in range(3):
-            px, py = sx + side * 2 * k, sy + 6 * k
+        sx, sy = shoulders[(side + 1) // 2]
+        for k in range(3):                                # they ride up as the arms lift
+            px, py = sx - side + side * 2 * k, sy - 2 + 6 * k * (1 - 0.4 * praise)
             d.ellipse(box(px, py, 13 - 2 * k, 8 - k), fill=225 - 30 * k, outline=0, width=2)
     hy = top - 4
     d.rectangle((x - 16, hy - 4, x + 16, hy + 4), fill=210, outline=0, width=2)           # gorget
