@@ -127,7 +127,9 @@ def draw_stars(d, stars, t, n):
         d.ellipse(box(x, y, 2.5, 1.5), fill=int(level))
 
 # ---- Wizard vs Dragon --------------------------------------------------------------------
-WIZ_X, GROUND = 105, 171
+# This scene is drawn upside down: it is laid out for the lid turned 180 degrees (cut corner at
+# the bottom right) and rotated back before sampling.
+WIZ_X, GROUND = 36, 171
 
 def draw_wizard(d, t, n, raise_amount, orb_radius, orb_level):
     """Returns the staff orb's position."""
@@ -180,10 +182,10 @@ def draw_dragon(d, x, y, flap, jaw, tail_phase, rear=0.0):
     rear < 0 lunges it forward. Returns the mouth position."""
     hx, hy = x - 52 + 10 * rear, y - 20 - 8 * rear
 
-    # Long tail curling down, with a wave running along it, ending in a barb
+    # Long tail streaming back, with a wave running along it, ending in a barb
     tail = [(x + 18, y + 3)]
     for k in range(8):
-        ang = 0.35 + k * 0.19 + 0.3 * math.sin(tail_phase - k * 0.7)
+        ang = -0.15 - k * 0.06 + 0.3 * math.sin(tail_phase - k * 0.7)
         tail.append((tail[-1][0] + 8 * math.cos(ang), tail[-1][1] + 8 * math.sin(ang)))
     for k in range(8):
         d.line([tail[k], tail[k + 1]], fill=170, width=max(1, 5 - k // 2))
@@ -231,7 +233,8 @@ def draw_dragon(d, x, y, flap, jaw, tail_phase, rear=0.0):
 def wizard_vs_dragon():
     n = 170
     rng = random.Random(7)
-    stars = twinkling_stars(rng, 22, n, max_y=150)
+    stars = [(W - x, H - y, *rest) for x, y, *rest in twinkling_stars(rng, 22, n)]
+    stars = [st for st in stars if st[1] < 150]
     shield_center, shield_radius = (WIZ_X + 4, GROUND - 36), 36
     fire, sparks, smoke = [], [], []
     flap_phase = flash = 0.0
@@ -240,14 +243,14 @@ def wizard_vs_dragon():
         # Dragon flies in, hovers, gets struck, and flees; it is off screen at the loop point
         if t < 28:
             k = ease(t / 28)
-            dx, dy = lerp(340, 212, k), lerp(14, 66, k)
+            dx, dy = lerp(330, 160, k), lerp(10, 64, k)
         elif t < 106:
-            dx, dy = 212, 66 + 3 * math.sin(t * 0.3)
+            dx, dy = 160, 64 + 3 * math.sin(t * 0.3)
         elif t < 118:
-            dx, dy = 212 + 14 * ease((t - 106) / 6), 66 - 4 * ease((t - 106) / 6)
+            dx, dy = 160 + 14 * ease((t - 106) / 6), 64 - 4 * ease((t - 106) / 6)
         else:
             k = (t - 118) / 22
-            dx, dy = 226 + 140 * k * k, 62 - 100 * k * k
+            dx, dy = 174 + 160 * k * k, 60 - 100 * k * k
         # Powerful downstroke, slower recovery
         speed = TAU / (7 if t >= 112 else 12)
         flap_phase += speed * (1.5 if math.cos(flap_phase) < 0 else 0.75)
@@ -335,12 +338,12 @@ def wizard_vs_dragon():
                 d.ellipse(box(*mouth, 3 + 3 * glow), fill=int(120 + 135 * glow))
 
         frames.append(img)
-    return wizard_vs_dragon_finale(frames, n)
+    return [f.transpose(Image.Transpose.ROTATE_180) for f in wizard_vs_dragon_finale(frames, n)]
 
 def wizard_vs_dragon_finale(frames, n):
     """A victory firework over the empty sky after the dragon has fled."""
     rng = random.Random(11)
-    start, burst_at = (WIZ_X + 25, GROUND - 82), (195, 50)
+    start, burst_at = (WIZ_X + 25, GROUND - 82), (150, 42)
     sparks = []
     for t in range(140, 168):
         d = ImageDraw.Draw(frames[t])
