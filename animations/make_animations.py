@@ -676,55 +676,78 @@ def fire_layers(n, overlap, cols, rows, seed, top=24):
             frames.append(small.resize((round(cols * MM_X / 2), round(rows * MM_Y)), Image.Resampling.BILINEAR))
     return loop_crossfade(frames, overlap)
 
-def draw_bonfire(img, d, x, g, flame):
-    d.ellipse(box(x, g + 2, 22, 7), fill=80)                                              # ash mound
-    d.line([(x - 18, g - 1), (x + 4, g - 6)], fill=110, width=3)                          # charred bones
-    d.line([(x + 16, g - 1), (x - 2, g - 7)], fill=110, width=3)
-    fx, fy = round(x - flame.width / 2), round(g - flame.height + 4)
+def draw_bonfire(img, d, x, g, flame, glow=1.0):
+    """Ash mound ringed with stones, the flame, and the coiled sword drawn over it with a dark border."""
+    d.ellipse(box(x, g + 1, 24, 7), fill=95, outline=170, width=2)                        # ash mound
+    for k in range(7):                                                                    # ring of stones
+        a = math.pi * (k + 0.5) / 7
+        d.ellipse(box(x + 27 * math.cos(a), g + 2 - 4 * math.sin(a), 3), fill=150)
+    if glow != 1.0:
+        flame = flame.point(lambda v: min(255, int(v * glow)))
+    fx, fy = round(x - flame.width / 2), round(g - flame.height + 6)
     region = (fx, fy, fx + flame.width, fy + flame.height)
     img.paste(ImageChops.lighter(img.crop(region), flame), region)
-    d.line([(x - 2, g + 2), (x + 4, g - 52)], fill=210, width=3)                          # coiled sword
-    d.line([(x - 4, g - 46), (x + 11, g - 48)], fill=210, width=3)
+    blade = [(x - 1, g + 2), (x + 3, g - 64)]
+    guard = [(x - 10, g - 50), (x + 13, g - 52)]
+    for width, level in ((9, 0), (4, 245)):                                               # coiled sword
+        d.line(blade, fill=level, width=width)
+        d.line(guard, fill=level, width=width)
+        d.ellipse(box(x + 3, g - 66, width / 2 + 1), fill=level)                          # pommel
 
 def limb(d, pts, width, level):
     """A line with a dark border, so limbs stay separate from the body behind them."""
     d.line(pts, fill=0, width=width + 4, joint="curve")
     d.line(pts, fill=level, width=width, joint="curve")
 
-def draw_solaire(d, x, g, praise, breath):
-    """Solaire in heavy plate, facing out; praise 0 is standing at ease, 1 is Praise the Sun."""
+def draw_solaire(d, x, g, praise, breath, shake=0.0, sit=0.0):
+    """Solaire in heavy plate, facing out. praise 0 is standing at ease and 1 the Praise the Sun
+    pose (shake jiggles the raised hands); sit 1 is sitting on the ground resting."""
     lean = 6 * praise                       # arches back into the pose
     spread = 6 * praise
-    for side in (-1, 1):                                                                  # legs
-        hip, foot = (x + side * 8, g - 38), (x + side * (12 + spread), g - 5)
-        knee = (lerp(hip[0], foot[0], 0.5) + side, g - 20)
-        limb(d, [hip, knee, foot], 10, 130)
-        d.ellipse(box(*knee, 7, 5), fill=225, outline=0, width=2)                         # knee cop
-        fx = foot[0] + side * 2
-        d.polygon([(fx - 8, g), (fx + 8, g), (fx + 6, g - 9), (fx - 6, g - 9)],
-                  fill=215, outline=0, width=2)                                           # sabaton
-    top = g - 86 - lean - breath
-    d.polygon([(x - 22, top), (x + 22, top), (x + 15, g - 40), (x - 15, g - 40)],
+    base = g + 18 * sit                     # sitting lowers everything above the hips
+    top = base - 86 - lean - breath
+    sx0, sy0 = x - 13, top - 8                                                            # shield on his back
+    d.ellipse(box(sx0, sy0, 19), fill=0)
+    d.ellipse(box(sx0, sy0, 16), fill=110, outline=230, width=2)
+    for k in range(4):
+        a = TAU * k / 8
+        d.line([(sx0 - 12 * math.cos(a), sy0 - 12 * math.sin(a)),
+                (sx0 + 12 * math.cos(a), sy0 + 12 * math.sin(a))], fill=200, width=2)
+    def legs():
+        for side in (-1, 1):
+            hip = (x + side * 8, base - 38)
+            foot = (x + side * lerp(12 + spread, 18, sit), g - 5)
+            knee = (lerp(lerp(hip[0], foot[0], 0.5) + side, x + side * 32, sit), lerp(g - 20, g - 22, sit))
+            limb(d, [hip, knee, foot], 10, 130)
+            d.ellipse(box(*knee, 7, 5), fill=225, outline=0, width=2)                     # knee cop
+            fx = foot[0] + side * 2
+            d.polygon([(fx - 8, g), (fx + 8, g), (fx + 6, g - 9), (fx - 6, g - 9)],
+                      fill=215, outline=0, width=2)                                       # sabaton
+    if sit < 0.5:
+        legs()
+    d.polygon([(x - 22, top), (x + 22, top), (x + 15, base - 40), (x - 15, base - 40)],
               fill=0)                                                                     # dark border
-    torso = [(x - 20, top), (x + 20, top), (x + 13, g - 40), (x - 13, g - 40)]
+    torso = [(x - 20, top), (x + 20, top), (x + 13, base - 40), (x - 13, base - 40)]
     d.polygon(torso, fill=150, outline=235, width=2)                                      # breastplate
-    d.polygon([(x - 12, top + 2), (x + 12, top + 2), (x + 9, g - 42), (x - 9, g - 42)],
+    d.polygon([(x - 12, top + 2), (x + 12, top + 2), (x + 9, base - 42), (x - 9, base - 42)],
               fill=35, outline=0, width=1)                                                # tabard
     for k, half in enumerate((15, 17, 19)):                                               # faulds
-        y = g - 40 + 6 * k
+        y = base - 40 + 6 * k
         d.rectangle((x - half, y, x + half, y + 6), fill=200 - 25 * k, outline=0, width=2)
     for side in (-1, 1):                                                                  # tassets
-        d.polygon([(x + side * 8, g - 40), (x + side * 20, g - 40), (x + side * 22, g - 26),
-                   (x + side * 10, g - 24)], fill=185, outline=0, width=2)
-    ex, ey = x, g - 64 - lean
+        d.polygon([(x + side * 8, base - 40), (x + side * 20, base - 40), (x + side * 22, base - 26),
+                   (x + side * 10, base - 24)], fill=185, outline=0, width=2)
+    if sit >= 0.5:
+        legs()                              # sitting, his thighs come forward over the faulds
+    ex, ey = x, base - 64 - lean
     for k in range(8):                                                                    # sun emblem
         a = TAU * k / 8
         d.line([(ex, ey), (ex + 9 * math.cos(a), ey + 9 * math.sin(a))], fill=200, width=2)
     d.ellipse(box(ex, ey, 5), fill=255)
     for side in (-1, 1):                                                                  # arms
         sx, sy = x + side * 22, top + 4
-        rest_hand = (x + side * 28, g - 46)
-        up_hand = (x + side * 44, g - 138)
+        rest_hand = (x + side * lerp(28, 30, sit), lerp(g - 46, g - 28, sit))             # on his knees
+        up_hand = (x + side * 44, g - 138 + shake)
         hand = (lerp(rest_hand[0], up_hand[0], praise), lerp(rest_hand[1], up_hand[1], praise))
         elbow = (lerp(sx, hand[0], 0.5) + side * 7 * (1 - praise), lerp(sy, hand[1], 0.5))
         limb(d, [(sx, sy), elbow, hand], 8, 145)
@@ -744,20 +767,42 @@ def draw_solaire(d, x, g, praise, breath):
     d.line([(x - 12, hy - 18), (x + 12, hy - 18)], fill=0, width=3)                       # visor slit
     d.line([(x, hy - 16), (x, hy - 7)], fill=40, width=3)
 
+def paste_figure(img, draw, visible, border=7):
+    """Draws a figure on its own layer and pastes it with a dark halo, so it stays readable over
+    bright light. visible is a function of y giving 0..1, for fading in and out from below."""
+    layers = []
+    for background in (0, 255):
+        layer, ld = new_canvas(background)
+        draw(ld)
+        layers.append(layer)
+    covered = ImageChops.difference(*layers).point(lambda v: 255 if v == 0 else 0)  # same on both = drawn
+    fade = Image.frombytes("L", (1, H), bytes(int(255 * visible(y)) for y in range(H))).resize((W, H))
+    mask = ImageChops.multiply(covered, fade)
+    img.paste(0, mask=mask.filter(ImageFilter.MaxFilter(border)))
+    img.paste(layers[0], mask=mask)
+
 def praise_the_sun():
-    """Laid out for the lid turned 180 degrees (cut corner bottom right), then rotated back."""
-    n = 170
+    """Solaire is summoned in, praises the sun, rests at the bonfire, and resting sends him home.
+    Laid out for the lid turned 180 degrees (cut corner bottom right), then rotated back."""
+    n = 240
     rng = random.Random(31)
     solaire_x, g = 52, 171
     fire_x, ledge = 122, 121              # the bonfire sits on a rock ledge above the cut corner
-    flames = fire_layers(n, 16, 16, 30, seed=5, top=30)
-    embers = [(int(k * n / 14 + rng.uniform(0, 8)), rng.uniform(-8, 8), rng.uniform(-0.6, 0.6))
-              for k in range(14)]
+    flames = fire_layers(n, 16, 11, 26, seed=5, top=30)
+    embers = [(int(k * n / 18 + rng.uniform(0, 8)), rng.uniform(-6, 6), rng.uniform(-0.5, 0.5))
+              for k in range(18)]
+    mist = [(rng.uniform(-26, 26), rng.uniform(0, 1), rng.uniform(2.5, 3.5)) for _ in range(26)]
     frames = []
     for t in range(n):
-        praise = ease((t - 40) / 14) * (1 - ease((t - 112) / 14))
-        sun = ease((t - 48) / 22) * (1 - ease((t - 112) / 20))
-        flare = math.exp(-max(0, t - 66) / 5) * ease((t - 60) / 6)
+        sign = ease(t / 14) * (1 - ease((t - 44) / 12))
+        arrive = ease((t - 14) / 30)                   # rises out of the summon sign
+        leave = ease((t - 200) / 28)                   # dissolves after sitting at the bonfire
+        praise = ease((t - 64) / 14) * (1 - ease((t - 136) / 14))
+        shake = 3 * math.sin(t * 1.4) * ease((t - 84) / 8) * (1 - ease((t - 128) / 6))
+        sit = ease((t - 158) / 18)
+        rest = ease((t - 172) / 10) * (1 - ease((t - 214) / 20))   # the fire flares as he rests
+        sun = ease((t - 72) / 22) * (1 - ease((t - 136) / 20))
+        flare = math.exp(-max(0, t - 92) / 5) * ease((t - 86) / 6)
         img, d = new_canvas(55 * flare)
         if sun > 0:
             sx, sy = solaire_x, lerp(-30, 24, sun)
@@ -771,16 +816,32 @@ def praise_the_sun():
             d.ellipse(box(sx, sy, 15), fill=int(sun * 140))
             d.ellipse(box(sx, sy, 11), fill=int(sun * 255))
         d.polygon([(0, H), (0, 170), (68, 170), (80, 150), (92, ledge), (W, ledge), (W, H)], fill=40)
-        d.ellipse(box(fire_x, ledge + 2, 46, 7), fill=60)                                 # firelight
-        draw_bonfire(img, d, fire_x, ledge, flames[t])
+        d.ellipse(box(fire_x, ledge + 2, 48, 7), fill=int(60 + 50 * rest))                # firelight
+        draw_bonfire(img, d, fire_x, ledge, flames[t], 1 + 0.6 * rest)
         sparks = []
         for t0, ox, drift in embers:
             age = (t - t0) % n
             if age < 30:
                 sparks.append((fire_x + ox + drift * age + 3 * math.sin(age * 0.4),
-                               ledge - 50 - age * 3.2, 1.8, 230 * (1 - age / 30)))
+                               ledge - 60 - age * 3.2, 1.8, 230 * (1 - age / 30)))
+        if sign > 0:                                                                      # summon sign
+            pulse = sign * (0.8 + 0.2 * math.sin(t * 0.5))
+            d.ellipse(box(solaire_x, g - 5, 32, 9), fill=int(120 * pulse))
+            d.ellipse(box(solaire_x, g - 5, 20, 6), fill=int(255 * pulse))
+        swirl = 4 * arrive * (1 - arrive) + 4 * leave * (1 - leave) + 0.4 * sign * (1 - arrive)
+        for ox, phase, r in mist:                                                         # golden mist
+            k = (phase + t / 40) % 1
+            sparks.append((solaire_x + ox * (1 - 0.4 * k) + 4 * math.sin(t * 0.2 + ox),
+                           g - 4 - 130 * k, r, 255 * min(1, swirl) * (1 - 0.7 * k)))
+        if arrive > 0 and leave < 1:
+            line_in = lerp(g + 10, g - 150, arrive)    # rows below this line have materialised
+            line_out = lerp(g + 10, g - 150, leave)    # rows below this line have gone again
+            def visible(y):
+                return (min(1, max(0, (y - line_in) / 20)) * min(1, max(0, (line_out - y) / 20 + 1))
+                        * (1 - 0.5 * leave))
+            paste_figure(img, lambda ld: draw_solaire(ld, solaire_x, g, praise,
+                                                      1.5 * cycle(t, n, 6), shake, sit), visible)
         draw_particles(d, sparks)
-        draw_solaire(d, solaire_x, g, praise, 1.5 * cycle(t, n, 5))
         frames.append(img.transpose(Image.Transpose.ROTATE_180))
     return frames
 
