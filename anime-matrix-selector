@@ -19,6 +19,17 @@ CUSTOM_LIST = os.path.expanduser("~/.config/anime-matrix/custom-gifs.txt")  # on
 SERVICE = "anime-matrix.service"
 MATRIX_SIZE = (74, 36)  # native diagonal LED grid; anything else needs scaling
 
+# asusd's live AniMe settings on the system bus (readable and writable without root)
+ASUSD_NAME = "xyz.ljones.Asusd"
+ANIME_PATH = "/xyz/ljones/aura/anime"
+ANIME_IFACE = "xyz.ljones.Anime"
+BRIGHTNESS_LEVELS = ["Off", "Low", "Medium", "High"]  # asusd values 0-3
+POWER_SWITCHES = [
+    ("OffWhenUnplugged", "Off when unplugged"),
+    ("OffWhenLidClosed", "Off when lid closed"),
+    ("OffWhenSuspended", "Off when suspended"),
+]
+
 SEARCH_DIRECTORIES = [
     ("/usr/share/asusd/anime/asus/rog", "ROG (Stock)"),
     ("/usr/share/asusd/anime/asus/gaming", "Gaming (Stock)"),
@@ -254,6 +265,11 @@ window {
     font-weight: bold;
     font-size: 13px;
 }
+.settings-card {
+    border-radius: 12px;
+    border: 1px solid alpha(currentColor, 0.15);
+    padding: 12px 16px;
+}
 """
 
 class AniMeMatrixApp(Gtk.Application):
@@ -366,9 +382,12 @@ class AniMeMatrixApp(Gtk.Application):
 
         main_box.append(bottom_box)
 
+        main_box.append(self.build_settings_card())
+
         # Start initial preview
         self.update_preview()
         self.check_service_status()
+        self.connect_asusd()
 
         win.connect("destroy", self.on_window_destroy)
         win.present()
@@ -513,6 +532,99 @@ class AniMeMatrixApp(Gtk.Application):
                 pass
 
         dialog.open(None, None, on_file_selected)
+
+    def build_settings_card(self):
+        """Brightness and power options, mirrored live from asusd."""
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        card.add_css_class("settings-card")
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        lbl = Gtk.Label(label="Display Settings", xalign=0, hexpand=True)
+        lbl.add_css_class("heading")
+        header.append(lbl)
+        self.lbl_settings_note = Gtk.Label(label="Connecting to asusd…")
+        self.lbl_settings_note.add_css_class("path-label")
+        header.append(self.lbl_settings_note)
+        card.append(header)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.append(Gtk.Label(label="Brightness", xalign=0, hexpand=True))
+        self.dd_brightness = Gtk.DropDown.new_from_strings(BRIGHTNESS_LEVELS)
+        self.dd_brightness.connect("notify::selected", self.on_brightness_changed)
+        row.append(self.dd_brightness)
+        card.append(row)
+
+        self.power_switches = {}
+        for prop, label in POWER_SWITCHES:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row.append(Gtk.Label(label=label, xalign=0, hexpand=True))
+            switch = Gtk.Switch(valign=Gtk.Align.CENTER)
+            switch.connect("notify::active", self.on_power_switch_changed, prop)
+            row.append(switch)
+            card.append(row)
+            self.power_switches[prop] = switch
+
+        self.anime_proxy = None
+        self.syncing_settings = False  # True while widgets are updated from asusd
+        self.settings_card = card
+        card.set_sensitive(False)
+        return card
+
+    def connect_asusd(self):
+        Gio.DBusProxy.new_for_bus(
+            Gio.BusType.SYSTEM, Gio.DBusProxyFlags.NONE, None,
+            ASUSD_NAME, ANIME_PATH, ANIME_IFACE, None, self.on_asusd_proxy_ready
+        )
+
+    def on_asusd_proxy_ready(self, source, result):
+        try:
+            self.anime_proxy = Gio.DBusProxy.new_for_bus_finish(result)
+        except GLib.Error as e:
+            self.lbl_settings_note.set_text(f"Unavailable: {e.message}")
+            return
+        # Picks up changes made elsewhere too (asusctl, a restarted asusd)
+        self.anime_proxy.connect("g-properties-changed", lambda *args: self.sync_settings())
+        self.anime_proxy.connect("notify::g-name-owner", lambda *args: self.sync_settings())
+        self.sync_settings()
+
+    def sync_settings(self):
+        """Show asusd's current values; disable the card if asusd isn't running."""
+        proxy = self.anime_proxy
+        brightness = proxy.get_cached_property("Brightness") if proxy else None
+        if brightness is None:
+            self.settings_card.set_sensitive(False)
+            self.lbl_settings_note.set_text("asusd is not running")
+            return
+        self.syncing_settings = True
+        self.dd_brightness.set_selected(min(brightness.unpack(), len(BRIGHTNESS_LEVELS) - 1))
+        for prop, switch in self.power_switches.items():
+            value = proxy.get_cached_property(prop)
+            if value is not None:
+                switch.set_active(value.unpack())
+        self.syncing_settings = False
+        self.settings_card.set_sensitive(True)
+        self.lbl_settings_note.set_text("")
+
+    def on_brightness_changed(self, dropdown, pspec):
+        if not self.syncing_settings:
+            self.set_anime_property("Brightness", GLib.Variant("u", dropdown.get_selected()))
+
+    def on_power_switch_changed(self, switch, pspec, prop):
+        if not self.syncing_settings:
+            self.set_anime_property(prop, GLib.Variant("b", switch.get_active()))
+
+    def set_anime_property(self, prop, value):
+        def done(proxy, result):
+            try:
+                proxy.call_finish(result)
+            except GLib.Error as e:
+                self.set_status(f"Couldn't change {prop}: {e.message}", "status-error")
+                self.sync_settings()  # put the control back to asusd's real value
+        self.anime_proxy.call(
+            "org.freedesktop.DBus.Properties.Set",
+            GLib.Variant("(ssv)", (ANIME_IFACE, prop, value)),
+            Gio.DBusCallFlags.NONE, -1, None, done
+        )
 
     def set_status(self, text, css_class):
         self.lbl_status.set_text(text)

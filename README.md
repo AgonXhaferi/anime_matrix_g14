@@ -11,6 +11,9 @@ ASUS ROG Zephyrus G14 (tested on a GA402RK), on top of [asusctl](https://gitlab.
   `anime-matrix.service`, a systemd user service that plays it with `asusctl` on a loop.
 - GIFs drawn for the native 74×36 LED grid play pixel-perfect (`asusctl anime pixel-gif`);
   any other size is scaled to fit (`asusctl anime gif`). The choice is saved in `mode.env`.
+- *Display Settings* shows asusd's brightness and "off when unplugged / lid closed /
+  suspended" options and changes them instantly over D-Bus. It also updates when they
+  are changed elsewhere, e.g. with `asusctl anime --brightness`.
 - *Turn Off* stops and disables the service and blanks the display, so it stays off
   across reboots until you pick an animation again.
 
