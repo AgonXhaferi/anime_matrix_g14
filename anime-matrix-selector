@@ -18,6 +18,10 @@ gi.require_version('Pango', '1.0')
 from gi.repository import Gtk, GLib, Gio, Gdk, GObject, Gsk, Graphene, Pango
 from PIL import Image, ImageChops, ImageDraw, ImageOps, ImageSequence
 
+APP_ID = "io.github.agonxhaferi.AnimeMatrixSelector"
+APP_DIR = os.path.dirname(os.path.realpath(__file__))  # the app is run through a symlink
+MIN_GTK = (4, 12)  # Gdk.MemoryFormat.G8, Gtk.Viewport.scroll_to
+
 def _config_dir():
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     return os.path.join(base, "anime-matrix")
@@ -117,9 +121,8 @@ def load_user_folders():
 def search_directories():
     return ([(os.path.join(STOCK_DIR, sub), name) for sub, name in STOCK_FOLDERS]
             + load_user_folders()
-            # Made for the GA402 by animations/make_animations.py; the app runs via a symlink
-            + [(os.path.join(os.path.dirname(os.path.realpath(__file__)), "animations"),
-                ORIGINALS_CATEGORY)])
+            # Made for the GA402 by animations/make_animations.py
+            + [(os.path.join(APP_DIR, "animations"), ORIGINALS_CATEGORY)])
 
 def check_asusctl():
     """Blocking: None if asusctl can play GIFs the way the service does, else why not."""
@@ -615,8 +618,44 @@ flowboxchild.anim-tile {
     border-radius: 8px;
     padding: 6px;
 }
+/* Selection and switches are styled here rather than left to the GTK theme, which can
+   make them hard to see (some dark themes draw switches nearly invisible) */
+flowboxchild.anim-tile:selected {
+    background: alpha(#3584e4, 0.30);
+    box-shadow: inset 0 0 0 2px #3584e4;
+}
 flowboxchild.anim-tile.active-anim {
     box-shadow: inset 0 0 0 2px #33d17a;
+}
+flowboxchild.anim-tile.active-anim:selected {
+    box-shadow: inset 0 0 0 2px #33d17a, inset 0 0 0 4px #3584e4;
+}
+switch {
+    background: alpha(currentColor, 0.25);
+    background-image: none;
+    border: none;
+    border-radius: 14px;
+    box-shadow: none;
+    outline: none;
+    min-width: 44px;
+    min-height: 24px;
+    padding: 0;
+}
+switch:checked {
+    background: #3584e4;
+}
+switch slider {
+    background: #ffffff;
+    background-image: none;
+    border: none;
+    border-radius: 50%;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    min-width: 20px;
+    min-height: 20px;
+    margin: 2px;
+}
+switch image {
+    color: transparent;
 }
 .section-heading {
     font-weight: bold;
@@ -638,7 +677,7 @@ flowboxchild.anim-tile.active-anim {
 
 class AniMeMatrixApp(Gtk.Application):
     def __init__(self):
-        super().__init__(application_id="org.rog.animematrix.selector", flags=Gio.ApplicationFlags.FLAGS_NONE)
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
         self.directories = search_directories()
         self.animations = scan_animations(self.directories)
         self.gif_player = None
@@ -663,6 +702,10 @@ class AniMeMatrixApp(Gtk.Application):
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+        # Finds the icon when run from a checkout, before install.sh has put it in place
+        Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(
+            os.path.join(APP_DIR, "data", "icons"))
+        win.set_icon_name(APP_ID)
 
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         main_box.set_margin_top(18)
@@ -1165,5 +1208,8 @@ class AniMeMatrixApp(Gtk.Application):
         GLib.source_remove(self.tick_id)
 
 if __name__ == "__main__":
+    if (Gtk.get_major_version(), Gtk.get_minor_version()) < MIN_GTK:
+        sys.exit("AniMe Matrix Selector needs GTK %d.%d or newer (found %d.%d)"
+                 % (*MIN_GTK, Gtk.get_major_version(), Gtk.get_minor_version()))
     app = AniMeMatrixApp()
     sys.exit(app.run(sys.argv))

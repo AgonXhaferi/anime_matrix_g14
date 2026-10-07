@@ -1,5 +1,5 @@
 [Unit]
-Description=ROG Zephyrus AniMe Matrix Background Runner
+Description=AniMe Matrix lid animation (AniMe Matrix Selector)
 After=default.target
 # Skip cleanly instead of crash-looping if the active GIF was moved or deleted
 ConditionPathExists=@CONFIG_DIR@/active.gif

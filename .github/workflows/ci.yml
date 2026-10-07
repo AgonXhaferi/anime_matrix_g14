@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK 4 and Pillow
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-gi gir1.2-gtk-4.0 python3-pil
+      - name: Syntax
+        run: |
+          python3 -c 'import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' \
+            anime-matrix-selector animations/make_animations.py tests/test_selector.py
+          bash -n install.sh
+      - name: Shellcheck
+        run: shellcheck install.sh
+      - name: Tests
+        run: python3 -m unittest discover -v tests
+      - name: Install into a staging folder
+        run: |
+          DESTDIR="$RUNNER_TEMP/pkg" ./install.sh --prefix /usr
+          test -L "$RUNNER_TEMP/pkg/usr/bin/anime-matrix-selector"
+          grep -q 'ExecStart=/usr/bin/asusctl' "$RUNNER_TEMP/pkg/usr/lib/systemd/user/anime-matrix.service"

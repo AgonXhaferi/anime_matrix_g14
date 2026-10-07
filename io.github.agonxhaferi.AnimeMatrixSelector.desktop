@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=AniMe Matrix Selector
+Comment=Pick and preview the animation on an ASUS AniMe Matrix lid display
+Exec=@BIN_DIR@/anime-matrix-selector
+Icon=io.github.agonxhaferi.AnimeMatrixSelector
+Terminal=false
+Type=Application
+Categories=Settings;HardwareSettings;
+Keywords=asus;rog;g14;anime;matrix;gif;animation;lid;
+StartupNotify=true

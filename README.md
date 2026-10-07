@@ -1,63 +1,121 @@
 # AniMe Matrix Selector
 
-A small GTK4 app for picking the animation on the AniMe Matrix lid display of ASUS ROG
-laptops, on top of [asusctl](https://gitlab.com/asus-linux/asusctl) 6 or newer. Made and tested
-on a Zephyrus G14 GA402RK; it should also work on the other AniMe models asusd supports
-(GA401, GU604), without the lid preview there (see below).
+[![CI](https://github.com/agonxhaferi/anime-matrix-selector/actions/workflows/ci.yml/badge.svg)](https://github.com/agonxhaferi/anime-matrix-selector/actions/workflows/ci.yml)
+
+A small GTK 4 app for picking the animation on the AniMe Matrix lid display of ASUS ROG
+laptops, on top of [asusctl](https://gitlab.com/asus-linux/asusctl) 6 or newer. Made for
+and tested on a Zephyrus G14 GA402RK; it should also work on the other AniMe models asusd
+supports (GA401, GU604), without the lid preview there (see below).
+
+![The selector with the Originals and the lid preview](docs/screenshot.png)
+
+This is an independent project, not made or endorsed by ASUS. ROG, Zephyrus and AniMe
+Matrix are ASUS trademarks.
+
+## Features
+
+- A grid of animated thumbnails from asusd's stock GIF folder, any folders you list in
+  `folders.conf`, the bundled Originals and any GIF you add with *Browse*, grouped by folder.
+  Start typing anywhere to search by name or category. The playing animation has a green
+  outline, and the window opens on it.
+- *Set as Main* plays your pick on the lid, on a loop, and keeps playing it after reboots.
+  *Turn Off* blanks the display until you pick an animation again.
+- An *On the lid* preview that simulates the GA402's 1,449 LEDs as seen from outside the
+  lid, using asusctl's own geometry and sampling. *Plain GIF* shows the file itself.
+- *Display Settings*: asusd's brightness and "off when unplugged / lid closed / suspended"
+  options, changed instantly and kept in sync when changed elsewhere (e.g. `asusctl`).
+- *Originals*: twelve animations drawn for the GA402 lid by `animations/make_animations.py`
+  (Wizard vs Dragon, Hyperspace, Digital Rain, Inferno, Thunderstorm, Space Battle,
+  Heartbeat, Plasma, Ripples, Equalizer, and two Dark Souls scenes: Praise the Sun and
+  Siegmeyer Napping).
+
+## Requirements
+
+- An ASUS laptop with an AniMe Matrix display, and `asusctl`/`asusd` **6.0 or newer**
+  with asusd running. See [asus-linux.org](https://asus-linux.org) for how to install it
+  on your distro.
+- systemd (the animation keeps playing through a systemd user service).
+- Python 3 with **GTK 4.12 or newer** and Pillow:
+
+| Distro | Packages |
+|---|---|
+| Fedora 39+ | `sudo dnf install python3-gobject gtk4 python3-pillow` |
+| Arch, Manjaro | `sudo pacman -S python-gobject gtk4 python-pillow` |
+| Debian 13+, Ubuntu 24.04+ | `sudo apt install python3-gi gir1.2-gtk-4.0 python3-pil` |
+
+Older releases (e.g. Ubuntu 22.04, Debian 12) ship GTK older than 4.12, which the app
+doesn't support; it says so and exits.
+
+## Install
+
+```sh
+git clone https://github.com/agonxhaferi/anime-matrix-selector.git
+cd anime-matrix-selector
+./install.sh
+```
+
+Then open *AniMe Matrix Selector* from your app menu, or run `anime-matrix-selector`.
+
+This installs for your user only and runs the app from the cloned folder (`~/.local/bin`
+gets a link to it), so a `git pull` updates it. Re-run `./install.sh` after pulling to pick
+up changes to the service or launcher. The installer fills in where asusctl lives and warns
+if anything is missing or too old.
+
+| Command | What it does |
+|---|---|
+| `./install.sh --uninstall` | Stops the animation and removes the app, service, launcher and icon. Your settings are kept. |
+| `sudo ./install.sh --prefix /usr/local` | Installs a copy for all users. Undo with the same command plus `--uninstall`. |
+| `DESTDIR=pkg ./install.sh --prefix /usr` | Stages the files into `pkg/` for building a distro package. |
 
 ## How it works
 
-- `anime-matrix-selector` (the app) shows GIFs from the stock asusd folder (found under
-  `/usr/share` or `/usr/local/share`), any folders you list in `folders.conf`, the Originals
-  and any GIF you add with *Browse* as a grid of
-  animated thumbnails, grouped by folder. Start typing anywhere to search by name or
-  category. The playing animation has a green outline, and the window opens on it.
-- Thumbnails load only when scrolled into view, keep at most 120 frames each, and pause
-  while the window isn't focused, to keep memory and battery use down.
 - *Set as Main* points `active.gif` in the config folder at your pick and restarts
   `anime-matrix.service`, a systemd user service that plays it with `asusctl` on a loop.
 - GIFs drawn for the native 74×36 LED grid play pixel-perfect (`asusctl anime pixel-gif`);
   any other size is scaled to fit (`asusctl anime gif`). The choice is saved in `mode.env`.
-- The preview has an *On the lid* view that simulates the GA402's 1,449 LEDs as seen from
-  outside the lid, using asusctl 6.3.8's own geometry and sampling (diagonal mapping for
-  native GIFs, 16-sample averaging for scaled ones). *Plain GIF* shows the file itself.
-  Native means 74×36 (ASUS's stock art) or 74×39 (the GA402's full diagonal grid).
-- The model is read from the board name (`/sys/class/dmi/id/board_name`), as asusd does. On
-  anything but a GA402 the *On the lid* view is hidden, since other lids lay out their LEDs
-  differently, and the Originals are labelled as made for the GA402. The app checks at start
-  that asusctl is installed and new enough (it needs `anime pixel-gif`) and says so if not.
-- *Originals* are animations made for this lid by `animations/make_animations.py`: Wizard vs
-  Dragon, Hyperspace, Digital Rain, Inferno, Thunderstorm, Space Battle, Heartbeat, Plasma,
-  Ripples, Equalizer, and two Dark Souls scenes: Praise the Sun and Siegmeyer Napping. Each scene is drawn in millimetres as the lid is seen from outside, and
-  every LED takes the brightness under its physical position, so they play pixel-perfect, the
-  right way up and without stretching. Edit a scene and run the script again to regenerate them.
-- *Display Settings* shows asusd's brightness and "off when unplugged / lid closed /
-  suspended" options and changes them instantly over D-Bus. It also updates when they
-  are changed elsewhere, e.g. with `asusctl anime --brightness`.
-- *Turn Off* stops and disables the service and blanks the display, so it stays off
-  across reboots until you pick an animation again.
+  On a GA402, 74×39 (its full diagonal grid) is native too.
+- The lid preview follows asusctl 6.3.8's geometry and sampling (diagonal mapping for native
+  GIFs, 16-sample averaging for scaled ones), so it shows what each LED will actually do.
+- The model is read from the board name (`/sys/class/dmi/id/board_name`). On anything but a
+  GA402 the lid preview is hidden, since other lids lay out their LEDs differently, and the
+  Originals are labelled as made for the GA402. At start the app checks that asusctl is
+  installed and new enough.
+- Thumbnails load only when scrolled into view, keep at most 120 frames each, and pause
+  while the window isn't focused, to keep memory and battery use down.
+- Each Original is drawn in millimetres as the lid is seen from outside, and every LED takes
+  the brightness under its physical position, so they play pixel-perfect, the right way up
+  and without stretching. Edit a scene and run `python3 animations/make_animations.py` to
+  regenerate them (needs only Pillow).
 
-## Install
+## Settings
 
-Needs `asusctl`/`asusd`, Python 3 with GTK4 bindings (`python3-gobject`, `gtk4`) and Pillow
-(`python3-pillow`).
-
-```sh
-./install.sh
-```
-
-The installer fills in where asusctl lives and where your config folder is, and warns if
-asusctl is missing or too old. The app in `~/.local/bin` is a link to this folder, so edits here apply on the next launch.
-The service and launcher are copies: re-run `./install.sh` after changing them.
-
-## Files outside this folder
-
-Your settings live in `$XDG_CONFIG_HOME/anime-matrix/` (usually `~/.config/anime-matrix/`)
-and are not part of the repo:
+Settings live in `$XDG_CONFIG_HOME/anime-matrix/` (usually `~/.config/anime-matrix/`):
 
 | File | Purpose |
 |---|---|
+| `folders.conf` | Extra GIF folders to show, one per line, optionally named: `My GIFs = ~/Pictures/lid` |
+| `custom-gifs.txt` | GIFs added with *Browse*, one path per line |
 | `active.gif` | Link to the animation currently playing |
 | `mode.env` | `pixel-gif` or `gif`, written by the app for the service |
-| `custom-gifs.txt` | GIFs added with *Browse*, one path per line |
-| `folders.conf` | Extra GIF folders to show, one per line, optionally named: `My GIFs = ~/Pictures/lid` |
+
+## Tested on
+
+| Laptop | Distro | asusctl | GTK |
+|---|---|---|---|
+| ROG Zephyrus G14 GA402RK | Fedora 44, GNOME 50 | 6.3.8 | 4.22 |
+
+Reports from other models are welcome; please include `cat /sys/class/dmi/id/board_name`.
+
+## Development
+
+```sh
+python3 -m unittest discover tests    # geometry and config checks, no hardware needed
+```
+
+## Credits and license
+
+The code and the Originals are released under the [MIT License](LICENSE).
+
+ASUS's stock animations are not included: the app reads them from asusd's own folder.
+*Praise the Sun* and *Siegmeyer Napping* are fan art of characters from FromSoftware's
+*Dark Souls*, which belong to FromSoftware and Bandai Namco.
