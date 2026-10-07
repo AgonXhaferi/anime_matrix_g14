@@ -5,8 +5,12 @@ ASUS ROG Zephyrus G14 (tested on a GA402RK), on top of [asusctl](https://gitlab.
 
 ## How it works
 
-- `anime-matrix-selector` (the app) lists GIFs from the stock asusd folders, your
-  `~/Pictures/ArmouryCrate_GIFs` folders and any GIF you add with *Browse*, with a live preview.
+- `anime-matrix-selector` (the app) shows GIFs from the stock asusd folders, your
+  `~/Pictures/ArmouryCrate_GIFs` folders and any GIF you add with *Browse* as a grid of
+  animated thumbnails, grouped by folder. Start typing anywhere to search by name or
+  category. The playing animation has a green outline, and the window opens on it.
+- Thumbnails load only when scrolled into view, keep at most 120 frames each, and pause
+  while the window isn't focused, to keep memory and battery use down.
 - *Set as Main* points `~/.config/anime-matrix/active.gif` at your pick and restarts
   `anime-matrix.service`, a systemd user service that plays it with `asusctl` on a loop.
 - GIFs drawn for the native 74×36 LED grid play pixel-perfect (`asusctl anime pixel-gif`);

@@ -2,6 +2,8 @@
 import os
 import sys
 import glob
+import math
+import queue
 import subprocess
 import threading
 import time
@@ -9,7 +11,10 @@ import gi
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
-from gi.repository import Gtk, GLib, Gio, Gdk
+gi.require_version('Gsk', '4.0')
+gi.require_version('Graphene', '1.0')
+gi.require_version('Pango', '1.0')
+from gi.repository import Gtk, GLib, Gio, Gdk, GObject, Gsk, Graphene, Pango
 from PIL import Image, ImageSequence
 
 DEFAULT_TARGET = "/usr/share/asusd/anime/asus/rog/Sunset.gif"
@@ -18,6 +23,9 @@ MODE_ENV = os.path.expanduser("~/.config/anime-matrix/mode.env")
 CUSTOM_LIST = os.path.expanduser("~/.config/anime-matrix/custom-gifs.txt")  # one path per line
 SERVICE = "anime-matrix.service"
 MATRIX_SIZE = (74, 36)  # native diagonal LED grid; anything else needs scaling
+CUSTOM_CATEGORY = "Custom"
+THUMB_SIZE = (148, 72)    # 2x the matrix, so native GIFs scale by a whole number
+THUMB_MAX_FRAMES = 120    # longer GIFs skip frames in thumbnails to bound memory
 
 # asusd's live AniMe settings on the system bus (readable and writable without root)
 ASUSD_NAME = "xyz.ljones.Asusd"
@@ -78,20 +86,14 @@ def scan_animations():
                     path = os.path.join(folder, file)
                     if path not in seen_paths:
                         seen_paths.add(path)
-                        display_name = f"[{category}]  {file}"
-                        results.append((display_name, path))
+                        results.append((category, path))
 
     # GIFs added via Browse live outside the scanned folders
     for path in load_custom_gifs() + [active_path]:
         if path not in seen_paths and os.path.exists(path):
             seen_paths.add(path)
-            results.append((f"[Custom]  {os.path.basename(path)}", path))
-
-    # Preselect the animation that is currently playing
-    for idx, (name, path) in enumerate(results):
-        if path == active_path:
-            return results, idx
-    return results, 0
+            results.append((CUSTOM_CATEGORY, path))
+    return results
 
 def anime_command_for(path):
     """pixel-gif only renders correctly for GIFs drawn for the 74x36 diagonal grid."""
@@ -161,10 +163,121 @@ def turn_off_matrix():
             return err
     return None
 
+class PixelPaintable(GObject.Object, Gdk.Paintable):
+    """Draws a texture centered and fitted; enlarges by whole numbers with sharp pixels."""
+    def __init__(self):
+        super().__init__()
+        self.texture = None
+
+    def set_texture(self, texture):
+        self.texture = texture
+        self.invalidate_contents()
+
+    def do_snapshot(self, snapshot, width, height):
+        if self.texture is None:
+            return
+        tw, th = self.texture.get_width(), self.texture.get_height()
+        scale = min(width / tw, height / th)
+        if scale >= 1:
+            scale, filt = math.floor(scale), Gsk.ScalingFilter.NEAREST
+        else:
+            filt = Gsk.ScalingFilter.TRILINEAR
+        w, h = tw * scale, th * scale
+        rect = Graphene.Rect().init((width - w) / 2, (height - h) / 2, w, h)
+        snapshot.append_scaled_texture(self.texture, filt, rect)
+
+def make_texture(w, h, data):
+    return Gdk.MemoryTexture.new(w, h, Gdk.MemoryFormat.R8G8B8A8, GLib.Bytes.new(data), w * 4)
+
+def decode_thumbnail(path):
+    """Frames as (w, h, rgba bytes, duration ms), shrunk to THUMB_SIZE and capped in count."""
+    frames = []
+    with Image.open(path) as im:
+        step = math.ceil(getattr(im, "n_frames", 1) / THUMB_MAX_FRAMES)
+        shrink = im.width > THUMB_SIZE[0] or im.height > THUMB_SIZE[1]
+        for i, frame in enumerate(ImageSequence.Iterator(im)):
+            if i % step == 0:
+                rgba = frame.convert("RGBA")
+                if shrink:
+                    rgba.thumbnail(THUMB_SIZE, Image.Resampling.LANCZOS)
+                frames.append([rgba.width, rgba.height, rgba.tobytes(), 0])
+            # a kept frame also lasts as long as the frames skipped after it
+            frames[-1][3] += max(frame.info.get("duration", 40), 20)
+    return frames
+
+class ThumbnailLoader:
+    """Decodes thumbnails one at a time on a background thread, on request."""
+    def __init__(self, on_ready):
+        self.on_ready = on_ready  # called on the UI thread as on_ready(path, frames)
+        self.requested = set()
+        self.jobs = queue.Queue()
+        threading.Thread(target=self._work, daemon=True).start()
+
+    def request(self, path):
+        if path not in self.requested:
+            self.requested.add(path)
+            self.jobs.put(path)
+
+    def _work(self):
+        while True:
+            path = self.jobs.get()
+            try:
+                frames = decode_thumbnail(path)
+            except Exception as e:
+                print(f"Error loading thumbnail for {path}: {e}")
+                frames = []
+            GLib.idle_add(self._deliver, path, frames)
+
+    def _deliver(self, path, frames):
+        self.on_ready(path, [(make_texture(w, h, data), dur) for w, h, data, dur in frames])
+        return False
+
+class AnimationTile(Gtk.FlowBoxChild):
+    """One grid entry: an animated thumbnail with the file name under it."""
+    def __init__(self, category, path):
+        super().__init__()
+        self.category = category
+        self.path = path
+        self.name = os.path.basename(path)
+        self.search_text = f"{self.name} {category}".lower()
+        self.frames = None  # None until the loader delivers them
+        self.frame_idx = 0
+        self.next_change = 0
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.paintable = PixelPaintable()
+        art = Gtk.Picture(paintable=self.paintable, can_shrink=True)
+        art.set_size_request(*THUMB_SIZE)
+        art.add_css_class("thumb-art")
+        box.append(art)
+        label = Gtk.Label(label=os.path.splitext(self.name)[0], max_width_chars=16,
+                          ellipsize=Pango.EllipsizeMode.END)
+        label.add_css_class("path-label")
+        box.append(label)
+        self.set_child(box)
+        self.set_tooltip_text(f"{self.name}\n{category}")
+        self.add_css_class("anim-tile")
+
+    def set_frames(self, frames):
+        self.frames = frames
+        self.frame_idx = 0
+        self.next_change = 0
+        if frames:
+            self.paintable.set_texture(frames[0][0])
+
+    def advance(self, now_ms):
+        if not self.frames or len(self.frames) < 2 or now_ms < self.next_change:
+            return
+        self.frame_idx = (self.frame_idx + 1) % len(self.frames)
+        tex, dur = self.frames[self.frame_idx]
+        self.paintable.set_texture(tex)
+        self.next_change = now_ms + dur
+
 class GifPlayer:
     """Renders and loops animated GIFs frame-by-frame inside Gtk.Picture."""
     def __init__(self, picture_widget):
-        self.picture = picture_widget
+        self.paintable = PixelPaintable()
+        picture_widget.set_paintable(self.paintable)
         self.frames = []
         self.frame_idx = 0
         self.timer_id = None
@@ -203,10 +316,7 @@ class GifPlayer:
     def _show(self, token, frames, info_str, on_loaded):
         if token != self.load_token:
             return False
-        self.frames = [
-            (Gdk.MemoryTexture.new(w, h, Gdk.MemoryFormat.R8G8B8A8, GLib.Bytes.new(data), w * 4), dur)
-            for w, h, data, dur in frames
-        ]
+        self.frames = [(make_texture(w, h, data), dur) for w, h, data, dur in frames]
         self.frame_idx = 0
         if self.frames:
             self.next_frame()
@@ -217,7 +327,7 @@ class GifPlayer:
         if not self.frames:
             return False
         tex, delay = self.frames[self.frame_idx]
-        self.picture.set_paintable(tex)
+        self.paintable.set_texture(tex)
         if len(self.frames) > 1:
             self.frame_idx = (self.frame_idx + 1) % len(self.frames)
             self.timer_id = GLib.timeout_add(delay, self.next_frame)
@@ -265,6 +375,22 @@ window {
     font-weight: bold;
     font-size: 13px;
 }
+.thumb-art {
+    background: #0f0f11;
+    border-radius: 6px;
+}
+flowboxchild.anim-tile {
+    border-radius: 8px;
+    padding: 6px;
+}
+flowboxchild.anim-tile.active-anim {
+    box-shadow: inset 0 0 0 2px #33d17a;
+}
+.section-heading {
+    font-weight: bold;
+    opacity: 0.8;
+    margin-top: 8px;
+}
 .settings-card {
     border-radius: 12px;
     border: 1px solid alpha(currentColor, 0.15);
@@ -275,13 +401,17 @@ window {
 class AniMeMatrixApp(Gtk.Application):
     def __init__(self):
         super().__init__(application_id="org.rog.animematrix.selector", flags=Gio.ApplicationFlags.FLAGS_NONE)
-        self.animations, self.default_idx = scan_animations()
+        self.animations = scan_animations()
         self.gif_player = None
+        self.selected_path = get_current_active_path()
+        self.tiles = {}       # path -> AnimationTile
+        self.sections = []    # (category, heading, flowbox)
+        self.syncing_selection = False
 
     def do_activate(self):
         win = Gtk.ApplicationWindow(application=self, title="AniMe Matrix Selector")
-        win.set_default_size(560, 520)
-        win.set_resizable(False)
+        win.set_default_size(1100, 760)
+        self.window = win
 
         # Apply CSS
         css_provider = Gtk.CssProvider()
@@ -318,28 +448,23 @@ class AniMeMatrixApp(Gtk.Application):
 
         main_box.append(title_box)
 
-        # Dropdown selection section
-        select_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        lbl_dropdown = Gtk.Label(label="Select Animation:", xalign=0)
-        lbl_dropdown.add_css_class("heading")
+        # Two columns: animation library on the left, preview and controls on the right
+        body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=20, vexpand=True)
+        main_box.append(body)
+        body.append(self.build_library(win))
 
-        labels = [item[0] for item in self.animations]
-        self.dropdown = Gtk.DropDown.new_from_strings(labels)
-        self.dropdown.set_selected(self.default_idx)
-        self.dropdown.connect("notify::selected", self.on_dropdown_changed)
-
-        select_box.append(lbl_dropdown)
-        select_box.append(self.dropdown)
-        main_box.append(select_box)
+        side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        side.set_size_request(420, -1)
+        side.set_hexpand(False)  # labels inside want to expand; give the extra width to the grid
+        body.append(side)
 
         # Preview Card
         self.preview_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.preview_card.add_css_class("preview-card")
 
         self.picture = Gtk.Picture()
-        self.picture.set_content_fit(Gtk.ContentFit.CONTAIN)
         self.picture.set_can_shrink(True)
-        self.picture.set_size_request(320, 180)
+        self.picture.set_size_request(370, 180)  # 5x the 74x36 matrix
         self.preview_card.append(self.picture)
 
         self.gif_player = GifPlayer(self.picture)
@@ -348,11 +473,11 @@ class AniMeMatrixApp(Gtk.Application):
         self.lbl_current_path.add_css_class("path-label")
         self.preview_card.append(self.lbl_current_path)
 
-        main_box.append(self.preview_card)
+        side.append(self.preview_card)
 
         # Status Label
-        self.lbl_status = Gtk.Label(label="", xalign=0.5)
-        main_box.append(self.lbl_status)
+        self.lbl_status = Gtk.Label(label="", xalign=0.5, wrap=True)
+        side.append(self.lbl_status)
 
         # Action Buttons
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -367,7 +492,7 @@ class AniMeMatrixApp(Gtk.Application):
         self.btn_off.connect("clicked", self.on_turn_off_clicked)
         btn_box.append(self.btn_off)
 
-        main_box.append(btn_box)
+        side.append(btn_box)
 
         # Bottom secondary tools
         bottom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -380,9 +505,9 @@ class AniMeMatrixApp(Gtk.Application):
         btn_add_custom.connect("clicked", self.on_add_custom_clicked)
         bottom_box.append(btn_add_custom)
 
-        main_box.append(bottom_box)
+        side.append(bottom_box)
 
-        main_box.append(self.build_settings_card())
+        side.append(self.build_settings_card())
 
         # Start initial preview
         self.update_preview()
@@ -392,11 +517,145 @@ class AniMeMatrixApp(Gtk.Application):
         win.connect("destroy", self.on_window_destroy)
         win.present()
 
+        # Start on the playing animation, once the grid has been laid out
+        if self.selected_path in self.tiles:
+            tile = self.tiles[self.selected_path]
+            self.last_tile_y = None
+            self.scroller.add_tick_callback(lambda w, clock: self.reveal_tile(tile))
+        self.tick_id = GLib.timeout_add(33, self.tick_thumbnails)
+
+    def build_library(self, win):
+        """Search box above a scrollable grid of animated thumbnails, grouped by category."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, hexpand=True)
+        self.search = Gtk.SearchEntry(placeholder_text="Search animations (just start typing)")
+        self.search.set_key_capture_widget(win)
+        self.search.connect("search-changed", self.on_search_changed)
+        box.append(self.search)
+
+        self.scroller = Gtk.ScrolledWindow(vexpand=True)
+        self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        box.append(self.scroller)
+
+        self.sections_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.scroller.set_child(self.sections_box)
+        self.lbl_no_results = Gtk.Label(label="No animations match", visible=False, margin_top=40)
+        self.lbl_no_results.add_css_class("dim-label")
+        self.sections_box.append(self.lbl_no_results)
+
+        for category in [c for _, c in SEARCH_DIRECTORIES] + [CUSTOM_CATEGORY]:
+            self.add_section(category)
+        for category, path in self.animations:
+            self.add_tile(category, path)
+        self.thumbs = ThumbnailLoader(self.on_thumbnail_ready)
+        self.refresh_sections()
+        return box
+
+    def add_section(self, category):
+        heading = Gtk.Label(label=category, xalign=0)
+        heading.add_css_class("section-heading")
+        flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.SINGLE, homogeneous=True,
+                           max_children_per_line=12, row_spacing=4, column_spacing=4,
+                           valign=Gtk.Align.START)
+        flow.set_filter_func(self.tile_matches)
+        flow.connect("selected-children-changed", self.on_tile_selected)
+        self.sections_box.append(heading)
+        self.sections_box.append(flow)
+        self.sections.append((category, heading, flow))
+
+    def add_tile(self, category, path):
+        tile = AnimationTile(category, path)
+        self.tiles[path] = tile
+        for cat, heading, flow in self.sections:
+            if cat == category:
+                flow.append(tile)
+        return tile
+
+    def tile_matches(self, tile):
+        query = self.search.get_text().strip().lower()
+        return all(word in tile.search_text for word in query.split())
+
+    def refresh_sections(self):
+        """Hide categories with nothing to show, and say so when nothing matches at all."""
+        any_shown = False
+        for cat, heading, flow in self.sections:
+            shown = any(self.tile_matches(t) for t in self.tiles.values() if t.category == cat)
+            heading.set_visible(shown)
+            flow.set_visible(shown)
+            any_shown = any_shown or shown
+        self.lbl_no_results.set_visible(not any_shown)
+
+    def on_search_changed(self, entry):
+        for _, _, flow in self.sections:
+            flow.invalidate_filter()
+        self.refresh_sections()
+
+    def on_tile_selected(self, flow):
+        if self.syncing_selection:
+            return
+        selected = flow.get_selected_children()
+        if not selected:
+            return
+        # Each category is its own grid, so clear the selection in the others
+        self.syncing_selection = True
+        for _, _, other in self.sections:
+            if other is not flow:
+                other.unselect_all()
+        self.syncing_selection = False
+        if selected[0].path != self.selected_path:
+            self.selected_path = selected[0].path
+            self.update_preview()
+            self.lbl_status.set_text("")
+
+    def select_tile(self, tile):
+        tile.get_parent().select_child(tile)  # triggers on_tile_selected
+
+    def reveal_tile(self, tile):
+        """Select `tile` and scroll it into view; returns False once done (tick callback)."""
+        ok, rect = tile.compute_bounds(self.sections_box)
+        if not ok or self.scroller.get_height() == 0 or rect.origin.y != self.last_tile_y:
+            # not laid out yet, or still moving while the window settles on its size
+            self.last_tile_y = rect.origin.y if ok else None
+            return True
+        self.syncing_selection = True
+        tile.get_parent().select_child(tile)
+        self.syncing_selection = False
+        # Focus first: focusing scrolls on its own, and our position should win
+        tile.grab_focus()
+        heading_room = 40  # keep the category heading visible above it
+        self.scroller.get_vadjustment().set_value(max(0, rect.origin.y - heading_room))
+        return False
+
+    def tick_thumbnails(self):
+        """Animate the thumbnails currently in view, and request ones not loaded yet."""
+        if not self.window.is_active():
+            return True  # save battery: thumbnails pause while you're in another window
+        now = GLib.get_monotonic_time() // 1000
+        view_height = self.scroller.get_height()
+        for tile in self.tiles.values():
+            if not tile.is_drawable():  # filtered out, hidden section or window minimised
+                continue
+            ok, rect = tile.compute_bounds(self.scroller)
+            if not ok or rect.origin.y + rect.size.height < 0 or rect.origin.y > view_height:
+                continue
+            if tile.frames is None:
+                self.thumbs.request(tile.path)
+            else:
+                tile.advance(now)
+        return True
+
+    def on_thumbnail_ready(self, path, frames):
+        if path in self.tiles:
+            self.tiles[path].set_frames(frames)
+
+    def mark_active_tile(self, active_path):
+        for path, tile in self.tiles.items():
+            if path == active_path:
+                tile.add_css_class("active-anim")
+            else:
+                tile.remove_css_class("active-anim")
+
     def get_selected_path(self):
-        idx = self.dropdown.get_selected()
-        if 0 <= idx < len(self.animations):
-            return self.animations[idx][1]
-        return None
+        return self.selected_path
 
     def update_preview(self):
         path = self.get_selected_path()
@@ -414,18 +673,16 @@ class AniMeMatrixApp(Gtk.Application):
             ["systemctl", "--user", "is-active", "anime-matrix.service"],
             capture_output=True, text=True
         )
+        playing = res.stdout.strip() == "active"
         if os.path.islink(ACTIVE_SYMLINK) and not os.path.exists(ACTIVE_SYMLINK):
             self.lbl_badge.set_text("⚠ Active GIF missing, pick another")
-        elif res.stdout.strip() == "active":
+        elif playing:
             active_file = os.path.basename(get_current_active_path())
             self.lbl_badge.set_visible(True)
             self.lbl_badge.set_text(f"● Active: {active_file}")
         else:
             self.lbl_badge.set_text("○ Matrix Inactive")
-
-    def on_dropdown_changed(self, dropdown, pspec):
-        self.update_preview()
-        self.lbl_status.set_text("")
+        self.mark_active_tile(get_current_active_path() if playing else None)
 
     def on_apply_clicked(self, button):
         path = self.get_selected_path()
@@ -515,19 +772,18 @@ class AniMeMatrixApp(Gtk.Application):
                 if gfile:
                     path = gfile.get_path()
                     if path and path.endswith(".gif"):
-                        paths = [item[1] for item in self.animations]
-                        if path in paths:
-                            self.dropdown.set_selected(paths.index(path))
-                            return
-                        remember_custom_gif(path)
-                        name = f"[Custom]  {os.path.basename(path)}"
-                        self.animations.append((name, path))
-                        labels = [item[0] for item in self.animations]
-                        model = Gtk.StringList.new(labels)
-                        self.dropdown.set_model(model)
-                        self.dropdown.set_selected(len(self.animations) - 1)
-                        self.update_preview()
-                        self.set_status(f"Added '{os.path.basename(path)}'", "status-info")
+                        tile = self.tiles.get(path)
+                        is_new = tile is None
+                        if is_new:
+                            remember_custom_gif(path)
+                            self.animations.append((CUSTOM_CATEGORY, path))
+                            tile = self.add_tile(CUSTOM_CATEGORY, path)
+                        self.search.set_text("")  # make sure the new tile isn't filtered out
+                        self.refresh_sections()
+                        self.select_tile(tile)
+                        if is_new:
+                            self.set_status(f"Added '{os.path.basename(path)}'", "status-info")
+                        GLib.timeout_add(100, lambda: self.scroller.get_child().scroll_to(tile, None) and False)
             except Exception:
                 pass
 
@@ -636,6 +892,7 @@ class AniMeMatrixApp(Gtk.Application):
     def on_window_destroy(self, window):
         if self.gif_player:
             self.gif_player.stop()
+        GLib.source_remove(self.tick_id)
 
 if __name__ == "__main__":
     app = AniMeMatrixApp()
