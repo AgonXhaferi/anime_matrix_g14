@@ -692,38 +692,57 @@ def limb(d, pts, width, level):
     d.line(pts, fill=level, width=width, joint="curve")
 
 def draw_solaire(d, x, g, praise, breath):
-    """Solaire facing out; praise 0 is standing at ease, 1 is the full Praise the Sun pose."""
+    """Solaire in heavy plate, facing out; praise 0 is standing at ease, 1 is Praise the Sun."""
     lean = 6 * praise                       # arches back into the pose
-    spread = 5 * praise
-    for side in (-1, 1):                                                                  # legs and boots
-        hip, foot = (x + side * 6, g - 36), (x + side * (10 + spread), g - 3)
-        limb(d, [hip, (lerp(hip[0], foot[0], 0.5) + side, g - 18), foot], 6, 140)
-        d.rectangle((foot[0] - 4, g - 7, foot[0] + 4, g), fill=210)
-    top = g - 84 - lean - breath
-    torso = [(x - 16, top), (x + 16, top), (x + 10, g - 38), (x - 10, g - 38)]
-    d.polygon(torso, fill=45, outline=210, width=2)                                       # tabard
-    d.polygon([(x - 11, g - 38), (x + 11, g - 38), (x + 13, g - 25), (x - 13, g - 25)],
-              fill=120, outline=0, width=1)                                               # mail skirt
-    d.line([(x - 11, g - 39), (x + 11, g - 39)], fill=230, width=3)                       # belt
-    ex, ey = x, g - 62 - lean
+    spread = 6 * praise
+    for side in (-1, 1):                                                                  # legs
+        hip, foot = (x + side * 8, g - 38), (x + side * (12 + spread), g - 5)
+        knee = (lerp(hip[0], foot[0], 0.5) + side, g - 20)
+        limb(d, [hip, knee, foot], 10, 130)
+        d.ellipse(box(*knee, 7, 5), fill=225, outline=0, width=2)                         # knee cop
+        fx = foot[0] + side * 2
+        d.polygon([(fx - 8, g), (fx + 8, g), (fx + 6, g - 9), (fx - 6, g - 9)],
+                  fill=215, outline=0, width=2)                                           # sabaton
+    top = g - 86 - lean - breath
+    d.polygon([(x - 22, top), (x + 22, top), (x + 15, g - 40), (x - 15, g - 40)],
+              fill=0)                                                                     # dark border
+    torso = [(x - 20, top), (x + 20, top), (x + 13, g - 40), (x - 13, g - 40)]
+    d.polygon(torso, fill=150, outline=235, width=2)                                      # breastplate
+    d.polygon([(x - 12, top + 2), (x + 12, top + 2), (x + 9, g - 42), (x - 9, g - 42)],
+              fill=35, outline=0, width=1)                                                # tabard
+    for k, half in enumerate((15, 17, 19)):                                               # faulds
+        y = g - 40 + 6 * k
+        d.rectangle((x - half, y, x + half, y + 6), fill=200 - 25 * k, outline=0, width=2)
+    for side in (-1, 1):                                                                  # tassets
+        d.polygon([(x + side * 8, g - 40), (x + side * 20, g - 40), (x + side * 22, g - 26),
+                   (x + side * 10, g - 24)], fill=185, outline=0, width=2)
+    ex, ey = x, g - 64 - lean
     for k in range(8):                                                                    # sun emblem
         a = TAU * k / 8
         d.line([(ex, ey), (ex + 9 * math.cos(a), ey + 9 * math.sin(a))], fill=200, width=2)
     d.ellipse(box(ex, ey, 5), fill=255)
     for side in (-1, 1):                                                                  # arms
-        sx, sy = x + side * 18, top + 3
-        rest_hand = (x + side * 24, g - 46)
-        up_hand = (x + side * 40, g - 136)
+        sx, sy = x + side * 22, top + 4
+        rest_hand = (x + side * 28, g - 46)
+        up_hand = (x + side * 44, g - 138)
         hand = (lerp(rest_hand[0], up_hand[0], praise), lerp(rest_hand[1], up_hand[1], praise))
-        elbow = (lerp(sx, hand[0], 0.5) + side * 6 * (1 - praise), lerp(sy, hand[1], 0.5))
-        limb(d, [(sx, sy), elbow, hand], 5, 165)
-        d.ellipse(box(*hand, 4), fill=230, outline=0, width=1)                            # gauntlet
-        d.ellipse(box(sx, sy, 7, 5), fill=200, outline=0, width=2)                        # pauldron
-    hy = top - 3
-    d.rectangle((x - 11, hy - 28, x + 11, hy + 2), fill=0)                                # gap at the neck
-    d.rectangle((x - 9, hy - 26, x + 9, hy), fill=175, outline=235, width=2)             # bucket helm
-    d.line([(x - 9, hy - 16), (x + 9, hy - 16)], fill=0, width=2)                         # visor slit
-    d.line([(x, hy - 15), (x, hy - 3)], fill=40, width=2)
+        elbow = (lerp(sx, hand[0], 0.5) + side * 7 * (1 - praise), lerp(sy, hand[1], 0.5))
+        limb(d, [(sx, sy), elbow, hand], 8, 145)
+        d.ellipse(box(*elbow, 6), fill=220, outline=0, width=2)                           # couter
+        d.ellipse(box(*hand, 7), fill=0)
+        d.rectangle(box(*hand, 5), fill=235)                                              # gauntlet
+    for side in (-1, 1):                                                                  # layered pauldrons
+        sx, sy = x + side * 21, top + 2
+        for k in range(3):
+            px, py = sx + side * 2 * k, sy + 6 * k
+            d.ellipse(box(px, py, 13 - 2 * k, 8 - k), fill=225 - 30 * k, outline=0, width=2)
+    hy = top - 4
+    d.rectangle((x - 16, hy - 4, x + 16, hy + 4), fill=210, outline=0, width=2)           # gorget
+    d.rectangle((x - 14, hy - 32, x + 14, hy - 4), fill=0)                                # dark border
+    d.rectangle((x - 12, hy - 30, x + 12, hy - 6), fill=170, outline=240, width=2)        # bucket helm
+    d.line([(x - 12, hy - 25), (x + 12, hy - 25)], fill=240, width=2)                     # brow band
+    d.line([(x - 12, hy - 18), (x + 12, hy - 18)], fill=0, width=3)                       # visor slit
+    d.line([(x, hy - 16), (x, hy - 7)], fill=40, width=3)
 
 def praise_the_sun():
     """Laid out for the lid turned 180 degrees (cut corner bottom right), then rotated back."""
