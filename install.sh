@@ -89,10 +89,16 @@ command -v systemctl >/dev/null || echo "warning: systemd not found; the animati
 mkdir -p "$BIN_DIR" "$UNIT_DIR" "$APP_DIR" "$ICON_DIR"
 
 if [ -n "$PREFIX" ]; then
-    # App and Originals copied together: the app finds animations/ next to its real path
-    install -d "$SHARE_DIR/animations"
-    install -m 755 "$SRC/anime-matrix-selector" "$SHARE_DIR/anime-matrix-selector"
-    install -m 644 "$SRC"/animations/*.gif "$SHARE_DIR/animations/"
+    # Launcher, package and bundled GIFs copied together: the launcher finds the package,
+    # and the package finds animations/, next to its real path
+    rm -rf "$SHARE_DIR"   # drop files from an older version
+    install -D -m 755 "$SRC/anime-matrix-selector" "$SHARE_DIR/anime-matrix-selector"
+    (cd "$SRC" && find anime_matrix_selector animations -type f \
+        \( -name '*.py' -o -name '*.css' -o -name '*.gif' \) \
+        ! -path '*/__pycache__/*' ! -name make_animations.py) |
+    while IFS= read -r f; do
+        install -D -m 644 "$SRC/$f" "$SHARE_DIR/$f"
+    done
     ln -sfn ../share/anime-matrix-selector/anime-matrix-selector "$BIN_DIR/anime-matrix-selector"
 else
     # Replace any old copy with a link back to this folder
