@@ -116,6 +116,12 @@ python3 -m unittest discover tests    # geometry and config checks, no hardware 
 
 The code and the Originals are released under the [MIT License](LICENSE).
 
+The *On the lid* preview's LED geometry and sampling are ported from
+[asusctl](https://gitlab.com/asus-linux/asusctl) 6.3.8 (`rog-anime/src/image.rs` and
+`diagonal.rs`, MPL-2.0) by Luke Jones and the asus-linux contributors, so the preview
+matches what asusctl sends to each LED. asusctl and asusd themselves are not bundled; the
+app runs the ones installed on your system.
+
 ASUS's stock animations are not included: the app reads them from asusd's own folder.
 *Praise the Sun* and *Siegmeyer Napping* are fan art of characters from FromSoftware's
 *Dark Souls*, which belong to FromSoftware and Bandai Namco.
