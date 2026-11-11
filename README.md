@@ -14,8 +14,9 @@ Matrix are ASUS trademarks.
 
 ## Features
 
-- A grid of animated thumbnails from asusd's stock GIF folder, any folders you list in
-  `folders.conf`, the bundled Originals and any GIF you add with *Browse*, grouped by folder.
+- A grid of animated thumbnails from asusd's stock GIF folder, the Armoury Crate animations
+  (optional download, see below), any folders you list in `folders.conf`, the bundled
+  Originals and any GIF you add with *Browse*, grouped by folder.
   Start typing anywhere to search by name or category. The playing animation has a green
   outline, and the window opens on it.
 - *Set as Main* plays your pick on the lid, on a loop, and keeps playing it after reboots.
@@ -28,6 +29,10 @@ Matrix are ASUS trademarks.
   (Wizard vs Dragon, Hyperspace, Digital Rain, Inferno, Thunderstorm, Space Battle,
   Heartbeat, Plasma, Ripples, Equalizer, and two Dark Souls scenes: Praise the Sun and
   Siegmeyer Napping).
+- *Armoury Crate*: the 22 animations from ASUS's Windows app (its AniMe Matrix library, the
+  Patterns and the Alan Walker collection), which asusd doesn't ship. They're kept in a
+  [separate repo](https://github.com/agonxhaferi/anime-matrix-armoury-crate) since they're
+  ASUS's; `install.sh` offers to download them.
 
 ## Requirements
 
@@ -54,18 +59,25 @@ cd anime-matrix-selector
 ./install.sh
 ```
 
-Then open *AniMe Matrix Selector* from your app menu, or run `anime-matrix-selector`.
+The installer asks whether to also download the Armoury Crate animations into
+`~/.local/share/anime-matrix/armoury-crate` (answer ahead with `--with-armoury-crate` or
+`--without-armoury-crate`). Then open *AniMe Matrix Selector* from your app menu, or run
+`anime-matrix-selector`.
 
 This installs for your user only and runs the app from the cloned folder (`~/.local/bin`
 gets a link to it), so a `git pull` updates it. Re-run `./install.sh` after pulling to pick
-up changes to the service or launcher. The installer fills in where asusctl lives and warns
+up changes to the service or launcher (this also updates the Armoury Crate animations). The installer fills in where asusctl lives and warns
 if anything is missing or too old.
 
 | Command | What it does |
 |---|---|
-| `./install.sh --uninstall` | Stops the animation and removes the app, service, launcher and icon. Your settings are kept. |
+| `./install.sh --uninstall` | Stops the animation and removes the app, service, launcher, icon and downloaded Armoury Crate animations. Your settings are kept. |
 | `sudo ./install.sh --prefix /usr/local` | Installs a copy for all users. Undo with the same command plus `--uninstall`. |
 | `DESTDIR=pkg ./install.sh --prefix /usr` | Stages the files into `pkg/` for building a distro package. |
+
+Installs with `--prefix` don't download the Armoury Crate animations; to add them for all
+users, clone [their repo](https://github.com/agonxhaferi/anime-matrix-armoury-crate) into
+`/usr/share/anime-matrix/armoury-crate` (or `/usr/local/share/…`).
 
 ## How it works
 
@@ -109,8 +121,19 @@ Reports from other models are welcome; please include `cat /sys/class/dmi/id/boa
 ## Development
 
 ```sh
-python3 -m unittest discover tests    # geometry and config checks, no hardware needed
+python3 -m unittest discover tests    # geometry, config and backend checks, no hardware needed
+python3 -m anime_matrix_selector      # run from the checkout without installing
 ```
+
+| Path | What's in it |
+|---|---|
+| `anime_matrix_selector/config.py` | Paths, lid model detection, `folders.conf`, which GIFs to show |
+| `anime_matrix_selector/lid.py` | GA402 LED geometry and the lid preview renderer (no GTK) |
+| `anime_matrix_selector/backend.py` | Driving the lid through asusctl and the systemd user service |
+| `anime_matrix_selector/asusd.py` | asusd's brightness and power settings over D-Bus |
+| `anime_matrix_selector/ui/` | The GTK 4 window: library, preview, settings card, `style.css` |
+| `animations/` | The Originals and their generator |
+| `anime-matrix-selector` | Small launcher that `install.sh` links into your `PATH` |
 
 ## Credits and license
 
@@ -122,6 +145,9 @@ The *On the lid* preview's LED geometry and sampling are ported from
 matches what asusctl sends to each LED. asusctl and asusd themselves are not bundled; the
 app runs the ones installed on your system.
 
-ASUS's stock animations are not included: the app reads them from asusd's own folder.
+No ASUS animations are included in this repo. The app reads asusd's stock ones from
+asusd's own folder, and the Armoury Crate ones from their
+[separate repo](https://github.com/agonxhaferi/anime-matrix-armoury-crate) if you download
+it; they belong to ASUS and are not covered by this repo's license.
 *Praise the Sun* and *Siegmeyer Napping* are fan art of characters from FromSoftware's
 *Dark Souls*, which belong to FromSoftware and Bandai Namco.

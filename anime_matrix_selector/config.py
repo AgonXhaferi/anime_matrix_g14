@@ -18,6 +18,15 @@ STOCK_FOLDERS = [
     ("asus/festive", "Festive (Stock)"),
     ("custom", "Custom (Stock)"),
 ]
+# ASUS's Armoury Crate animations (the Windows app's AniMe Matrix library), which asusd
+# doesn't ship. They live in their own repo, which install.sh offers to download into
+# <data dir>/anime-matrix/armoury-crate. Subfolder there, section name.
+ARMOURY_CRATE_REPO = "https://github.com/agonxhaferi/anime-matrix-armoury-crate"
+ARMOURY_CRATE_FOLDERS = [
+    ("normal", "Armoury Crate"),
+    ("patterns", "Armoury Crate Patterns"),
+    ("alan-walker", "Armoury Crate × Alan Walker"),
+]
 LID_MODELS = ("GA401", "GA402", "GU604")
 # Native diagonal GIF sizes: ASUS's stock art is 74x36, the GA402 lid itself reads 74x39
 STOCK_NATIVE_SIZE = (74, 36)
@@ -25,8 +34,8 @@ GA402_NATIVE_SIZE = (74, 39)
 
 FOLDERS_TEMPLATE = """\
 # Extra folders of GIFs for the AniMe Matrix Selector, one per line, shown in this order
-# between the stock animations and the Originals. Optionally name the section:
-#   Armoury Crate = ~/Pictures/ArmouryCrate_GIFs/AniMe_Matrix_Normal
+# after the stock and Armoury Crate animations, before the Originals. Optionally name the section:
+#   My GIFs = ~/Pictures/lid-gifs
 #   ~/Pictures/lid-gifs          (shown as "lid-gifs")
 """
 
@@ -36,14 +45,28 @@ def default_config_dir():
     return os.path.join(base, "anime-matrix")
 
 
+def system_data_dirs():
+    data_dirs = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    return [d for d in data_dirs.split(":") if d] + ["/usr/local/share", "/usr/share"]
+
+
 def default_stock_dir():
     """asusd's bundled GIFs: /usr/share/asusd/anime, or wherever the distro put it."""
-    data_dirs = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
-    for base in data_dirs.split(":") + ["/usr/local/share", "/usr/share"]:
+    for base in system_data_dirs():
         path = os.path.join(base, "asusd", "anime")
-        if base and os.path.isdir(path):
+        if os.path.isdir(path):
             return path
     return "/usr/share/asusd/anime"
+
+
+def default_armoury_crate_dir():
+    """The downloaded Armoury Crate animations, this user's copy first; "" if none."""
+    data_home = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    for base in [data_home] + system_data_dirs():
+        path = os.path.join(base, "anime-matrix", "armoury-crate")
+        if os.path.isdir(path):
+            return path
+    return ""
 
 
 def read_board_name():
@@ -65,10 +88,12 @@ class Config:
     stock_dir: str
     board_name: str = ""
     originals_dir: str = ORIGINALS_DIR
+    armoury_crate_dir: str = ""  # "" when the Armoury Crate animations aren't installed
 
     @classmethod
     def detect(cls):
-        return cls(default_config_dir(), default_stock_dir(), read_board_name())
+        return cls(default_config_dir(), default_stock_dir(), read_board_name(),
+                   armoury_crate_dir=default_armoury_crate_dir())
 
     @property
     def lid_model(self):
@@ -143,7 +168,9 @@ def load_user_folders(cfg):
 
 def search_directories(cfg):
     """Every (folder, category) to show, in display order."""
+    armoury_crate = ARMOURY_CRATE_FOLDERS if cfg.armoury_crate_dir else []
     return ([(os.path.join(cfg.stock_dir, sub), name) for sub, name in STOCK_FOLDERS]
+            + [(os.path.join(cfg.armoury_crate_dir, sub), name) for sub, name in armoury_crate]
             + load_user_folders(cfg)
             # Made for the GA402 by animations/make_animations.py
             + [(cfg.originals_dir, cfg.originals_category)])

@@ -2,6 +2,7 @@
 
 Run with: python3 -m unittest discover tests
 """
+import dataclasses
 import os
 import sys
 import tempfile
@@ -93,6 +94,30 @@ class FoldersConf(TempConfig):
             (os.path.expanduser("~/Pictures/lid"), "My GIFs"),
             ("/srv/gifs/", "gifs"),
         ])
+
+
+class ArmouryCrate(TempConfig):
+    def test_found_in_the_users_data_folder_first(self):
+        mine = os.path.join(self.tmp, "home", "anime-matrix", "armoury-crate")
+        system = os.path.join(self.tmp, "usr", "anime-matrix", "armoury-crate")
+        os.makedirs(mine)
+        os.makedirs(system)
+        env = {"XDG_DATA_HOME": os.path.join(self.tmp, "home"),
+               "XDG_DATA_DIRS": os.path.join(self.tmp, "usr")}
+        with mock.patch.dict(os.environ, env):
+            self.assertEqual(config.default_armoury_crate_dir(), mine)
+            os.rmdir(mine)
+            self.assertEqual(config.default_armoury_crate_dir(), system)
+            os.rmdir(system)
+            self.assertEqual(config.default_armoury_crate_dir(), "")
+
+    def test_sections_shown_only_when_installed(self):
+        names = [name for _, name in config.search_directories(self.cfg)]
+        self.assertNotIn("Armoury Crate", names)
+        cfg = dataclasses.replace(self.cfg, armoury_crate_dir="/ac")
+        dirs = config.search_directories(cfg)
+        self.assertIn(("/ac/normal", "Armoury Crate"), dirs)
+        self.assertEqual(len(dirs), len(names) + len(config.ARMOURY_CRATE_FOLDERS))
 
 
 class Scanning(TempConfig):
