@@ -15,7 +15,7 @@ set -euo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ID=io.github.agonxhaferi.AnimeMatrixSelector
 SERVICE=anime-matrix.service
-ARMOURY_CRATE_REPO=https://github.com/agonxhaferi/anime-matrix-armoury-crate.git
+ARMOURY_CRATE_REPO=https://github.com/AgonXhaferi/anime_matrix_animations.git
 PREFIX=""
 UNINSTALL=0
 ARMOURY_CRATE=ask
