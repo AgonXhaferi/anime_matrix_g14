@@ -16,13 +16,23 @@ window {
     opacity: 0.75;
     font-family: monospace;
 }
-.active-badge {
+.status-badge {
     font-size: 12px;
     font-weight: bold;
-    color: #33d17a;
-    background: rgba(51, 209, 122, 0.15);
     border-radius: 6px;
     padding: 3px 8px;
+}
+.status-badge.playing {
+    color: #33d17a;
+    background: rgba(51, 209, 122, 0.15);
+}
+.status-badge.off {
+    color: #9a9996;
+    background: rgba(154, 153, 150, 0.15);
+}
+.status-badge.warning {
+    color: #e5a50a;
+    background: rgba(229, 165, 10, 0.15);
 }
 .status-success {
     color: #33d17a;

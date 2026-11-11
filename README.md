@@ -7,7 +7,7 @@ laptops, on top of [asusctl](https://gitlab.com/asus-linux/asusctl) 6 or newer. 
 and tested on a Zephyrus G14 GA402RK; it should also work on the other AniMe models asusd
 supports (GA401, GU604), without the lid preview there (see below).
 
-![The selector with the Originals and the lid preview](docs/screenshot.png)
+![The selector showing the Armoury Crate animations and the lid preview](docs/screenshot.png)
 
 This is an independent project, not made or endorsed by ASUS. ROG, Zephyrus and AniMe
 Matrix are ASUS trademarks.

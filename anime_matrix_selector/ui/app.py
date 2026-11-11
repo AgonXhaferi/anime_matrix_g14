@@ -119,8 +119,8 @@ class AniMeMatrixApp(Gtk.Application):
         titles.append(subtitle)
         header.append(titles)
 
-        self.lbl_badge = Gtk.Label(label="● Active in Background")
-        self.lbl_badge.add_css_class("active-badge")
+        self.lbl_badge = Gtk.Label()
+        self.set_badge("○ Checking…", "off")
         header.append(self.lbl_badge)
         return header
 
@@ -227,13 +227,18 @@ class AniMeMatrixApp(Gtk.Application):
         run_in_background(lambda: backend.service_state(self.cfg), self.show_service_state,
                           self.on_background_error)
 
+    def set_badge(self, text, state):
+        """state is "playing", "off" or "warning", which picks the badge's colour."""
+        self.lbl_badge.set_text(text)
+        self.lbl_badge.set_css_classes(["status-badge", state])
+
     def show_service_state(self, state):
         if state.active_missing:
-            self.lbl_badge.set_text("⚠ Active GIF missing, pick another")
+            self.set_badge("⚠ Active GIF missing, pick another", "warning")
         elif state.playing:
-            self.lbl_badge.set_text(f"● Active: {os.path.basename(state.active_path)}")
+            self.set_badge(f"● Active: {os.path.basename(state.active_path)}", "playing")
         else:
-            self.lbl_badge.set_text("○ Matrix Inactive")
+            self.set_badge("○ Matrix Inactive", "off")
         self.library.mark_active(state.active_path if state.playing else None)
 
     # ---- actions -----------------------------------------------------------------------
