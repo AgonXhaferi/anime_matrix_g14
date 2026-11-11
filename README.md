@@ -1,6 +1,6 @@
 # AniMe Matrix Selector
 
-[![CI](https://github.com/agonxhaferi/anime-matrix-selector/actions/workflows/ci.yml/badge.svg)](https://github.com/agonxhaferi/anime-matrix-selector/actions/workflows/ci.yml)
+[![CI](https://github.com/AgonXhaferi/anime_matrix_g14/actions/workflows/ci.yml/badge.svg)](https://github.com/AgonXhaferi/anime_matrix_g14/actions/workflows/ci.yml)
 
 A small GTK 4 app for picking the animation on the AniMe Matrix lid display of ASUS ROG
 laptops, on top of [asusctl](https://gitlab.com/asus-linux/asusctl) 6 or newer. Made for
@@ -31,7 +31,7 @@ Matrix are ASUS trademarks.
   Siegmeyer Napping).
 - *Armoury Crate*: the 22 animations from ASUS's Windows app (its AniMe Matrix library, the
   Patterns and the Alan Walker collection), which asusd doesn't ship. They're kept in a
-  [separate repo](https://github.com/agonxhaferi/anime-matrix-armoury-crate) since they're
+  [separate repo](https://github.com/AgonXhaferi/anime_matrix_animations) since they're
   ASUS's; `install.sh` offers to download them.
 
 ## Requirements
@@ -54,8 +54,8 @@ doesn't support; it says so and exits.
 ## Install
 
 ```sh
-git clone https://github.com/agonxhaferi/anime-matrix-selector.git
-cd anime-matrix-selector
+git clone https://github.com/AgonXhaferi/anime_matrix_g14.git
+cd anime_matrix_g14
 ./install.sh
 ```
 
@@ -76,7 +76,7 @@ if anything is missing or too old.
 | `DESTDIR=pkg ./install.sh --prefix /usr` | Stages the files into `pkg/` for building a distro package. |
 
 Installs with `--prefix` don't download the Armoury Crate animations; to add them for all
-users, clone [their repo](https://github.com/agonxhaferi/anime-matrix-armoury-crate) into
+users, clone [their repo](https://github.com/AgonXhaferi/anime_matrix_animations) into
 `/usr/share/anime-matrix/armoury-crate` (or `/usr/local/share/…`).
 
 ## How it works
@@ -147,7 +147,7 @@ app runs the ones installed on your system.
 
 No ASUS animations are included in this repo. The app reads asusd's stock ones from
 asusd's own folder, and the Armoury Crate ones from their
-[separate repo](https://github.com/agonxhaferi/anime-matrix-armoury-crate) if you download
+[separate repo](https://github.com/AgonXhaferi/anime_matrix_animations) if you download
 it; they belong to ASUS and are not covered by this repo's license.
 *Praise the Sun* and *Siegmeyer Napping* are fan art of characters from FromSoftware's
 *Dark Souls*, which belong to FromSoftware and Bandai Namco.

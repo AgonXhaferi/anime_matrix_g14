@@ -21,7 +21,7 @@ STOCK_FOLDERS = [
 # ASUS's Armoury Crate animations (the Windows app's AniMe Matrix library), which asusd
 # doesn't ship. They live in their own repo, which install.sh offers to download into
 # <data dir>/anime-matrix/armoury-crate. Subfolder there, section name.
-ARMOURY_CRATE_REPO = "https://github.com/agonxhaferi/anime-matrix-armoury-crate"
+ARMOURY_CRATE_REPO = "https://github.com/AgonXhaferi/anime_matrix_animations"
 ARMOURY_CRATE_FOLDERS = [
     ("normal", "Armoury Crate"),
     ("patterns", "Armoury Crate Patterns"),
