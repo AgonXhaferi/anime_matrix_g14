@@ -13,10 +13,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-gi gir1.2-gtk-4.0 python3-pil
-      - name: Syntax
+      - name: Syntax and imports
         run: |
-          python3 -c 'import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' \
-            anime-matrix-selector animations/make_animations.py tests/test_selector.py
+          python3 -m compileall -q anime-matrix-selector anime_matrix_selector animations tests
+          python3 -c 'import anime_matrix_selector.ui.app'
           bash -n install.sh
       - name: Shellcheck
         run: shellcheck install.sh
@@ -26,4 +26,6 @@ jobs:
         run: |
           DESTDIR="$RUNNER_TEMP/pkg" ./install.sh --prefix /usr
           test -L "$RUNNER_TEMP/pkg/usr/bin/anime-matrix-selector"
+          test -f "$RUNNER_TEMP/pkg/usr/share/anime-matrix-selector/anime_matrix_selector/ui/style.css"
+          "$RUNNER_TEMP/pkg/usr/share/anime-matrix-selector/anime-matrix-selector" --help >/dev/null
           grep -q 'ExecStart=/usr/bin/asusctl' "$RUNNER_TEMP/pkg/usr/lib/systemd/user/anime-matrix.service"

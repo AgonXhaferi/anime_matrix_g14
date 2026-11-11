@@ -8,20 +8,26 @@
 #                                /usr/local. Honours DESTDIR, for building distro packages.
 #   --uninstall                  removes what the matching install put in place. Your settings
 #                                (picked animation, folders.conf) are kept.
+#   --with-armoury-crate         also download ASUS's Armoury Crate animations from their own
+#   --without-armoury-crate      repo (user installs only), or don't; asked if neither is given.
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ID=io.github.agonxhaferi.AnimeMatrixSelector
 SERVICE=anime-matrix.service
+ARMOURY_CRATE_REPO=https://github.com/agonxhaferi/anime-matrix-armoury-crate.git
 PREFIX=""
 UNINSTALL=0
+ARMOURY_CRATE=ask
 
-usage() { sed -n '2,11s/^# \{0,1\}//p' "$0"; }
+usage() { sed -n '2,13s/^# \{0,1\}//p' "$0"; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --prefix) PREFIX="${2:?--prefix needs a folder}"; shift 2 ;;
         --prefix=*) PREFIX="${1#*=}"; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
+        --with-armoury-crate) ARMOURY_CRATE=yes; shift ;;
+        --without-armoury-crate) ARMOURY_CRATE=no; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -44,6 +50,7 @@ else
     STATE_DIR="$CONFIG_HOME/anime-matrix"
 fi
 APP_DIR="$DATA_DIR/applications"
+ARMOURY_CRATE_DIR="$DATA_DIR/anime-matrix/armoury-crate"   # where the app looks for them
 ICON_DIR="$DATA_DIR/icons/hicolor/scalable/apps"
 
 refresh_caches() {
@@ -62,6 +69,8 @@ if [ "$UNINSTALL" = 1 ]; then
     if [ -n "$PREFIX" ]; then
         rm -rf "$SHARE_DIR"
     else
+        rm -rf "$ARMOURY_CRATE_DIR"
+        rmdir "$DATA_DIR/anime-matrix" 2>/dev/null || true
         systemctl --user daemon-reload 2>/dev/null || true
     fi
     [ -z "${DESTDIR:-}" ] && refresh_caches
@@ -89,10 +98,16 @@ command -v systemctl >/dev/null || echo "warning: systemd not found; the animati
 mkdir -p "$BIN_DIR" "$UNIT_DIR" "$APP_DIR" "$ICON_DIR"
 
 if [ -n "$PREFIX" ]; then
-    # App and Originals copied together: the app finds animations/ next to its real path
-    install -d "$SHARE_DIR/animations"
-    install -m 755 "$SRC/anime-matrix-selector" "$SHARE_DIR/anime-matrix-selector"
-    install -m 644 "$SRC"/animations/*.gif "$SHARE_DIR/animations/"
+    # Launcher, package and bundled GIFs copied together: the launcher finds the package,
+    # and the package finds animations/, next to its real path
+    rm -rf "$SHARE_DIR"   # drop files from an older version
+    install -D -m 755 "$SRC/anime-matrix-selector" "$SHARE_DIR/anime-matrix-selector"
+    (cd "$SRC" && find anime_matrix_selector animations -type f \
+        \( -name '*.py' -o -name '*.css' -o -name '*.gif' \) \
+        ! -path '*/__pycache__/*' ! -name make_animations.py) |
+    while IFS= read -r f; do
+        install -D -m 644 "$SRC/$f" "$SHARE_DIR/$f"
+    done
     ln -sfn ../share/anime-matrix-selector/anime-matrix-selector "$BIN_DIR/anime-matrix-selector"
 else
     # Replace any old copy with a link back to this folder
@@ -110,6 +125,26 @@ install -m 644 "$SRC/data/icons/hicolor/scalable/apps/$APP_ID.svg" "$ICON_DIR/$A
 if [ -n "$PREFIX" ]; then
     echo "Installed under $ROOT. Each user starts it from 'AniMe Matrix Selector'; picking an animation enables their service."
     exit 0
+fi
+
+# ASUS's Armoury Crate animations live in their own repo; offer to fetch or update them
+if [ -d "$ARMOURY_CRATE_DIR/.git" ] && [ "$ARMOURY_CRATE" != no ]; then
+    git -C "$ARMOURY_CRATE_DIR" pull -q --ff-only ||
+        echo "warning: couldn't update the Armoury Crate animations in $ARMOURY_CRATE_DIR" >&2
+elif [ ! -e "$ARMOURY_CRATE_DIR" ]; then
+    if [ "$ARMOURY_CRATE" = ask ] && [ -t 0 ]; then
+        read -r -p "Also download ASUS's 22 Armoury Crate animations (about 700 KB)? [Y/n] " answer
+        case "$answer" in [nN]*) ARMOURY_CRATE=no ;; *) ARMOURY_CRATE=yes ;; esac
+    fi
+    if [ "$ARMOURY_CRATE" = yes ]; then
+        if ! command -v git >/dev/null; then
+            echo "warning: git not found, so the Armoury Crate animations weren't downloaded" >&2
+        elif git clone -q --depth 1 "$ARMOURY_CRATE_REPO" "$ARMOURY_CRATE_DIR"; then
+            echo "Downloaded the Armoury Crate animations into $ARMOURY_CRATE_DIR."
+        else
+            echo "warning: couldn't download the Armoury Crate animations; re-run with --with-armoury-crate to try again" >&2
+        fi
+    fi
 fi
 
 systemctl --user daemon-reload
